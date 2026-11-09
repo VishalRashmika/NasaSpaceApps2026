@@ -26,7 +26,10 @@ if __name__ == "__main__" and __package__ is None:
 
 import numpy as np
 
-from backend.morphology import separate_features
+from backend.morphology import (
+    detect_point_sources,
+    separate_features,
+)
 from backend.pipeline import (
     ColorbarNotFoundError,
     PipelineError,
@@ -89,6 +92,9 @@ def run_pipeline(
 
     if separate_morphology or kwargs.get("separate_features", False):
         morph_layers = separate_features(scalar_array, return_metadata=True, **kwargs)
+        if kwargs.get("detect_point_sources", False) or kwargs.get("detect_sources", False):
+            point_sources = detect_point_sources(morph_layers["point_source_layer"], **kwargs)
+            morph_layers["point_sources"] = point_sources
         metadata["morphology"] = morph_layers
 
     if output_path is not None:
@@ -142,6 +148,11 @@ def main() -> None:
         action="store_true",
         help="Separate scalar field into diffuse background and point sources",
     )
+    parser.add_argument(
+        "--detect-sources",
+        action="store_true",
+        help="Detect isolated point sources and extract spatial/photometric metadata",
+    )
     args = parser.parse_args()
 
     try:
@@ -151,7 +162,8 @@ def main() -> None:
             output_path=args.output,
             method=args.method,
             preprocess=args.preprocess,
-            separate_morphology=args.separate_features,
+            separate_morphology=args.separate_features or args.detect_sources,
+            detect_point_sources=args.detect_sources,
             return_metadata=True,
         )
         print(

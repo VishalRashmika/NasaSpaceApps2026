@@ -7,6 +7,9 @@ import numpy as np
 
 from backend.morphology import (
     MorphologyError,
+    detect_point_sources,
+    detect_point_sources_blob,
+    detect_point_sources_contours,
     separate_features,
 )
 
@@ -330,6 +333,277 @@ class TestMorphologyFeatureSeparation(unittest.TestCase):
             self.assertIn("point_source_layer", meta["morphology"])
             self.assertEqual(meta["morphology"]["diffuse_layer"].shape, (100, 100))
             self.assertEqual(meta["morphology"]["point_source_layer"].shape, (100, 100))
+
+
+class TestDetectPointSources(unittest.TestCase):
+    """Test suite for detect_point_sources, detect_point_sources_blob, and detect_point_sources_contours."""
+
+    def test_detect_point_sources_blob_keys_and_types(self):
+        """Verify returned list of dictionaries structure, keys, and standard Python types."""
+        # Create an image with a clear circular spot
+        img = np.zeros((100, 100), dtype=np.float32)
+        y, x = np.mgrid[0:100, 0:100]
+        img += 0.9 * np.exp(-((x - 50) ** 2 + (y - 50) ** 2) / 12.0).astype(np.float32)
+
+        results = detect_point_sources(img, method="blob")
+        self.assertIsInstance(results, list)
+        self.assertGreater(len(results), 0)
+
+        ps = results[0]
+        self.assertIsInstance(ps, dict)
+
+        # Expected keys from requirements
+        for key in ["x", "y", "radius", "flux", "area", "perimeter", "center", "peak_intensity", "method"]:
+            self.assertIn(key, ps)
+
+        self.assertIsInstance(ps["x"], float)
+        self.assertIsInstance(ps["y"], float)
+        self.assertIsInstance(ps["radius"], float)
+        self.assertIsInstance(ps["flux"], float)
+        self.assertIsInstance(ps["area"], float)
+        self.assertIsInstance(ps["perimeter"], float)
+        self.assertIsInstance(ps["center"], tuple)
+        self.assertEqual(len(ps["center"]), 2)
+        self.assertEqual(ps["method"], "blob")
+
+    def test_detect_point_sources_spatial_and_photometric_accuracy(self):
+        """
+        Verify that detected (x, y), radius, and peak flux match ground truth
+        for multiple discrete point sources.
+        """
+        img = np.zeros((150, 150), dtype=np.float32)
+        y, x = np.mgrid[0:150, 0:150]
+
+        # Ground truth point sources: (cx, cy), peak intensity, sigma_sq
+        targets = [
+            (40.0, 45.0, 0.95, 10.0),
+            (110.0, 100.0, 0.80, 15.0),
+        ]
+
+        for cx, cy, peak, sig_sq in targets:
+            img += peak * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / sig_sq).astype(np.float32)
+        img = np.clip(img, 0.0, 1.0)
+
+        results = detect_point_sources(img, method="blob", min_threshold=0.1, max_threshold=1.0)
+        self.assertEqual(len(results), 2)
+
+        # Match each detected source to nearest ground truth target
+        for cx, cy, peak, _ in targets:
+            matched = min(results, key=lambda s: (s["x"] - cx) ** 2 + (s["y"] - cy) ** 2)
+            dist = np.sqrt((matched["x"] - cx) ** 2 + (matched["y"] - cy) ** 2)
+            self.assertLess(dist, 1.5, f"Centroid ({matched['x']}, {matched['y']}) should match ({cx}, {cy})")
+            self.assertAlmostEqual(matched["flux"], peak, delta=0.08)
+            self.assertGreater(matched["radius"], 1.0)
+
+    def test_detect_point_sources_contours_irregular_shapes(self):
+        """
+        Verify cv2.findContours alternative correctly calculates area and perimeter
+        for irregularly shaped point sources.
+        """
+        img = np.zeros((120, 120), dtype=np.float32)
+
+        # Irregular L-shaped / bean point source
+        img[30:50, 30:45] = 0.85
+        img[45:60, 30:60] = 0.90
+        img[40, 35] = 0.98  # peak
+
+        results = detect_point_sources(img, method="contours", threshold=0.2)
+        self.assertGreater(len(results), 0)
+
+        ps = results[0]
+        self.assertEqual(ps["method"], "contours")
+        self.assertIn("area", ps)
+        self.assertIn("perimeter", ps)
+
+        # Area and perimeter must be positive and non-zero
+        self.assertGreater(ps["area"], 50.0)
+        self.assertGreater(ps["perimeter"], 20.0)
+        # Peak intensity must reflect the peak inside the shape
+        self.assertAlmostEqual(ps["flux"], 0.98, places=2)
+        # Center should be inside the bounding box
+        self.assertTrue(30 <= ps["x"] <= 60)
+        self.assertTrue(30 <= ps["y"] <= 60)
+
+    def test_filter_by_area(self):
+        """Verify min_area and max_area filtering."""
+        import cv2
+
+        img = np.zeros((120, 120), dtype=np.float32)
+        # Tiny 2x2 spot (area ~1.5)
+        img[20:22, 20:22] = 0.9
+        # Large disc of radius 12 (area ~450)
+        cv2.circle(img, (80, 80), 12, 0.85, -1)
+
+        # With min_area=50: the tiny spot is filtered out, only large disc is kept
+        res_large = detect_point_sources(img, method="blob", min_area=50.0)
+        self.assertEqual(len(res_large), 1)
+        self.assertGreater(res_large[0]["x"], 60)
+
+        # With max_area=10: large disc is filtered out, tiny spot is kept
+        res_tiny = detect_point_sources(img, method="blob", min_area=0.5, max_area=10.0)
+        self.assertEqual(len(res_tiny), 1)
+        self.assertLess(res_tiny[0]["x"], 30)
+
+    def test_threshold_formats_and_aliases(self):
+        """Verify normalized [0.0, 1.0] thresholds, 8-bit [0, 255] thresholds, and camelCase aliases."""
+        img = np.zeros((100, 100), dtype=np.float32)
+        y, x = np.mgrid[0:100, 0:100]
+        img += 0.9 * np.exp(-((x - 50) ** 2 + (y - 50) ** 2) / 10.0).astype(np.float32)
+
+        # Normalized float thresholds
+        res1 = detect_point_sources(img, min_threshold=0.1, max_threshold=0.95)
+        self.assertEqual(len(res1), 1)
+
+        # 8-bit uint8 thresholds
+        res2 = detect_point_sources(img, min_threshold=25.0, max_threshold=240.0)
+        self.assertEqual(len(res2), 1)
+
+        # camelCase parameter aliases
+        res3 = detect_point_sources(
+            img,
+            minThreshold=25.0,
+            maxThreshold=240.0,
+            filterByArea=True,
+            minArea=2.0,
+            maxArea=5000.0,
+        )
+        self.assertEqual(len(res3), 1)
+
+    def test_contours_threshold_modes(self):
+        """Verify contours threshold parameter with float value and 'otsu'."""
+        img = np.zeros((100, 100), dtype=np.float32)
+        img[30:60, 30:60] = 0.85
+
+        # Explicit threshold
+        res_explicit = detect_point_sources(img, method="contours", threshold=0.3)
+        self.assertEqual(len(res_explicit), 1)
+
+        # Otsu's threshold
+        res_otsu = detect_point_sources(img, method="contours", threshold="otsu")
+        self.assertEqual(len(res_otsu), 1)
+
+    def test_empty_and_flat_images(self):
+        """Verify all-zeros and uniform images return empty lists."""
+        zeros_img = np.zeros((80, 80), dtype=np.float32)
+        self.assertEqual(detect_point_sources(zeros_img, method="blob"), [])
+        self.assertEqual(detect_point_sources(zeros_img, method="contours"), [])
+
+        flat_img = np.full((80, 80), 0.5, dtype=np.float32)
+        # Uniform field has no localized point sources
+        self.assertEqual(detect_point_sources(flat_img, method="blob"), [])
+
+    def test_sorting_options(self):
+        """Verify sorting by flux, x, area."""
+        img = np.zeros((100, 100), dtype=np.float32)
+        # 3 spots with varying flux and x coordinates
+        img[30:35, 20:25] = 0.50  # x=22, flux=0.5
+        img[30:35, 70:75] = 0.95  # x=72, flux=0.95
+        img[30:35, 45:50] = 0.75  # x=47, flux=0.75
+
+        # Sort by flux (descending)
+        by_flux = detect_point_sources(img, method="blob", sort_by="flux")
+        fluxes = [s["flux"] for s in by_flux]
+        self.assertEqual(fluxes, sorted(fluxes, reverse=True))
+
+        # Sort by x (ascending)
+        by_x = detect_point_sources(img, method="blob", sort_by="x")
+        xs = [s["x"] for s in by_x]
+        self.assertEqual(xs, sorted(xs))
+
+    def test_invalid_inputs_and_error_handling(self):
+        """Verify exception handling for invalid inputs and parameters."""
+        valid_img = np.zeros((50, 50), dtype=np.float32)
+
+        # None input
+        with self.assertRaises(TypeError):
+            detect_point_sources(None)
+
+        # Empty array
+        with self.assertRaises(ValueError):
+            detect_point_sources(np.array([]))
+
+        # 1D array
+        with self.assertRaises(ValueError):
+            detect_point_sources(np.zeros(50, dtype=np.float32))
+
+        # Unknown method
+        with self.assertRaises(ValueError):
+            detect_point_sources(valid_img, method="unsupported_method")
+
+        # min_threshold >= max_threshold
+        with self.assertRaises(ValueError):
+            detect_point_sources(valid_img, min_threshold=200, max_threshold=50)
+
+        # min_area > max_area
+        with self.assertRaises(ValueError):
+            detect_point_sources(valid_img, min_area=500, max_area=50)
+
+    def test_separate_features_detect_sources_integration(self):
+        """Verify separate_features seamlessly integrates with detect_point_sources."""
+        h, w = 100, 100
+        y, x = np.mgrid[0:h, 0:w]
+        background = (0.2 + 0.1 * (x / 100.0)).astype(np.float32)
+        hotspot = 0.9 * np.exp(-((x - 50) ** 2 + (y - 50) ** 2) / 8.0).astype(np.float32)
+        composite = np.clip(background + hotspot, 0.0, 1.0)
+
+        res = separate_features(composite, kernel_size=(51, 51), detect_sources=True)
+        self.assertIn("point_sources", res)
+        self.assertIsInstance(res["point_sources"], list)
+        self.assertGreater(len(res["point_sources"]), 0)
+
+        ps = res["point_sources"][0]
+        self.assertAlmostEqual(ps["x"], 50.0, delta=1.5)
+        self.assertAlmostEqual(ps["y"], 50.0, delta=1.5)
+        self.assertGreater(ps["flux"], 0.8)
+
+    def test_direct_helper_functions(self):
+        """Verify detect_point_sources_blob and detect_point_sources_contours directly."""
+        img = np.zeros((80, 80), dtype=np.float32)
+        img[38:43, 38:43] = 0.9
+
+        blobs = detect_point_sources_blob(img)
+        self.assertIsInstance(blobs, list)
+        self.assertGreater(len(blobs), 0)
+        self.assertEqual(blobs[0]["method"], "blob")
+
+        contours = detect_point_sources_contours(img)
+        self.assertIsInstance(contours, list)
+        self.assertGreater(len(contours), 0)
+        self.assertEqual(contours[0]["method"], "contours")
+
+    def test_run_pipeline_with_detect_sources(self):
+        """Verify run_pipeline with detect_sources=True extracts point sources into metadata."""
+        import tempfile
+        import os
+        import cv2
+        from backend.main import run_pipeline
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            canvas = np.zeros((100, 100, 3), dtype=np.uint8)
+            canvas[20:80, 20:80] = 120
+            # Hotspot
+            cv2.circle(canvas, (50, 50), 4, (255, 255, 255), -1)
+            test_path = os.path.join(temp_dir, "pipeline_sources.png")
+            cv2.imwrite(test_path, canvas)
+
+            scalar, meta = run_pipeline(
+                test_path,
+                method="vq",
+                colormap_name="jet",
+                separate_morphology=True,
+                detect_sources=True,
+                return_metadata=True,
+            )
+
+            self.assertIn("morphology", meta)
+            self.assertIn("point_sources", meta["morphology"])
+            sources = meta["morphology"]["point_sources"]
+            self.assertIsInstance(sources, list)
+            self.assertGreater(len(sources), 0)
+            self.assertIn("x", sources[0])
+            self.assertIn("y", sources[0])
+            self.assertIn("flux", sources[0])
+            self.assertIn("radius", sources[0])
 
 
 if __name__ == "__main__":

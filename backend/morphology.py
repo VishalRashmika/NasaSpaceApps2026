@@ -13,7 +13,7 @@ or melodic triggers for point sources), preventing auditory clutter and masking.
 """
 
 import logging
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -253,10 +253,489 @@ def separate_features(
             "raw_residual_max": float(np.max(residual_clipped)),
         }
 
+    if kwargs.get("detect_point_sources", False) or kwargs.get("detect_sources", False):
+        result["point_sources"] = detect_point_sources(point_source_layer, **kwargs)
+
     return result
+
+
+def _normalize_threshold_pair(
+    min_t: float,
+    max_t: float,
+) -> Tuple[float, float]:
+    """
+    Validate and normalize min/max threshold values into 8-bit [0, 255] scale.
+
+    Args:
+        min_t: Minimum threshold (accepts [0.0, 1.0] or [0, 255]).
+        max_t: Maximum threshold (accepts [0.0, 1.0] or [0, 255]).
+
+    Returns:
+        Tuple[float, float]: Validated (min_thresh_u8, max_thresh_u8) on [1.0, 255.0].
+
+    Raises:
+        ValueError: If min_t >= max_t or values are invalid.
+    """
+    min_val = float(min_t)
+    max_val = float(max_t)
+
+    # Detect if thresholds were provided on normalized [0.0, 1.0] scale
+    if 0.0 < max_val <= 1.0:
+        max_val = max_val * 255.0
+    if 0.0 < min_val < 1.0:
+        min_val = min_val * 255.0
+
+    min_val = max(1.0, min_val)
+    max_val = min(255.0, max_val)
+
+    if min_val >= max_val:
+        raise ValueError(
+            f"min_threshold ({min_t}) must be strictly less than max_threshold ({max_t})."
+        )
+
+    return float(min_val), float(max_val)
+
+
+def _sort_point_sources(
+    sources: List[Dict[str, Any]],
+    sort_by: Optional[str] = None,
+    descending: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Sort a list of detected point source dictionaries by a specified attribute.
+
+    Args:
+        sources: List of point source metadata dictionaries.
+        sort_by: Field name to sort by ('flux', 'area', 'radius', 'perimeter', 'x', 'y').
+        descending: Sort descending if True. Defaults to True for photometric/size metrics,
+                    False (ascending) for spatial coordinates (x, y).
+
+    Returns:
+        List[Dict[str, Any]]: Sorted list of dictionaries.
+    """
+    if not sort_by:
+        return sources
+
+    key = str(sort_by).strip().lower()
+    if descending is None:
+        reverse = key not in ("x", "y")
+    else:
+        reverse = bool(descending)
+
+    return sorted(sources, key=lambda s: s.get(key, 0.0), reverse=reverse)
+
+
+def detect_point_sources_blob(
+    residual_image: Any,
+    min_threshold: float = 20.0,
+    max_threshold: float = 250.0,
+    filter_by_area: bool = True,
+    min_area: float = 1.0,
+    max_area: float = 5000.0,
+    filter_by_circularity: bool = False,
+    min_circularity: float = 0.5,
+    max_circularity: float = 1.0,
+    sort_by: Optional[str] = None,
+    descending: Optional[bool] = None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Detect compact, circular point sources using OpenCV's SimpleBlobDetector.
+
+    Configures cv2.SimpleBlobDetector with minThreshold, maxThreshold, and filterByArea
+    to isolate localized emission spikes, stellar objects, and wildfire hotspots.
+
+    Args:
+        residual_image: 2D quantitative residual scalar array in [0.0, 1.0] or 8-bit image.
+        min_threshold: Minimum intensity threshold for blob detection (default: 20.0 / ~0.08).
+        max_threshold: Maximum intensity threshold for blob detection (default: 250.0 / ~0.98).
+        filter_by_area: Whether to filter candidate blobs by pixel area (default: True).
+        min_area: Minimum blob area in pixels (default: 1.0).
+        max_area: Maximum blob area in pixels (default: 5000.0).
+        filter_by_circularity: Whether to enforce circularity for compact shapes (default: False).
+        min_circularity: Minimum circularity ratio (4 * pi * area / perim^2) in [0.0, 1.0].
+        max_circularity: Maximum circularity ratio (default: 1.0).
+        sort_by: Optional attribute to sort detections by ('flux', 'area', 'radius', 'x', 'y').
+        descending: Sort direction (default: True for photometric metrics, False for spatial).
+        **kwargs: Additional parameter overrides:
+            - minThreshold / maxThreshold: Aliases for min_threshold / max_threshold.
+            - filterByArea / minArea / maxArea: Aliases for area parameters.
+            - filterByCircularity / minCircularity: Aliases for circularity parameters.
+            - threshold_step / thresholdStep: Threshold increment for detector (default: 5.0).
+            - min_repeatability / minRepeatability: Detections required per blob (default: 1).
+            - min_dist_between_blobs / minDistBetweenBlobs: Minimum distance in px (default: 2.0).
+            - blob_color / blobColor: Target blob color (default: 255 for bright point sources).
+            - filter_by_convexity / filterByConvexity: Whether to filter by convexity (default: False).
+            - filter_by_inertia / filterByInertia: Whether to filter by inertia ratio (default: False).
+
+    Returns:
+        List[Dict[str, Any]]: List of metadata dictionaries for each detected point source.
+    """
+    # Parameter aliases
+    min_threshold = kwargs.get("minThreshold", min_threshold)
+    max_threshold = kwargs.get("maxThreshold", max_threshold)
+    filter_by_area = kwargs.get("filterByArea", filter_by_area)
+    min_area = kwargs.get("minArea", min_area)
+    max_area = kwargs.get("maxArea", max_area)
+    filter_by_circularity = kwargs.get("filterByCircularity", filter_by_circularity)
+    min_circularity = kwargs.get("minCircularity", min_circularity)
+    max_circularity = kwargs.get("maxCircularity", max_circularity)
+
+    norm_scalar = _prepare_scalar_array(residual_image)
+    h, w = norm_scalar.shape
+
+    min_thresh_cv, max_thresh_cv = _normalize_threshold_pair(min_threshold, max_threshold)
+
+    min_a = float(min_area)
+    max_a = float(max_area) if max_area is not None else float(h * w)
+    if min_a > max_a:
+        raise ValueError(f"min_area ({min_a}) must be less than or equal to max_area ({max_a}).")
+
+    img_u8 = np.clip(norm_scalar * 255.0, 0, 255).astype(np.uint8)
+
+    params = cv2.SimpleBlobDetector_Params()
+    # Point sources in residual imagery are bright features on zero/dark backgrounds
+    params.filterByColor = bool(kwargs.get("filterByColor", kwargs.get("filter_by_color", True)))
+    params.blobColor = int(kwargs.get("blobColor", kwargs.get("blob_color", 255)))
+
+    # Thresholding configuration
+    params.minThreshold = float(min_thresh_cv)
+    params.maxThreshold = float(max_thresh_cv)
+    params.thresholdStep = float(kwargs.get("thresholdStep", kwargs.get("threshold_step", 5.0)))
+    params.minRepeatability = int(kwargs.get("minRepeatability", kwargs.get("min_repeatability", 1)))
+    params.minDistBetweenBlobs = float(
+        kwargs.get("minDistBetweenBlobs", kwargs.get("min_dist_between_blobs", 2.0))
+    )
+
+    # Area filtering
+    params.filterByArea = bool(filter_by_area)
+    params.minArea = float(min_a)
+    params.maxArea = float(max_a)
+
+    # Circularity filtering
+    params.filterByCircularity = bool(filter_by_circularity)
+    if params.filterByCircularity:
+        params.minCircularity = float(min_circularity)
+        params.maxCircularity = float(max_circularity)
+
+    # Convexity and inertia filters (disabled by default to avoid rejecting small rasterized spots)
+    params.filterByConvexity = bool(
+        kwargs.get("filterByConvexity", kwargs.get("filter_by_convexity", False))
+    )
+    if params.filterByConvexity:
+        params.minConvexity = float(kwargs.get("minConvexity", kwargs.get("min_convexity", 0.8)))
+        params.maxConvexity = float(kwargs.get("maxConvexity", kwargs.get("max_convexity", 1.0)))
+
+    params.filterByInertia = bool(
+        kwargs.get("filterByInertia", kwargs.get("filter_by_inertia", False))
+    )
+    if params.filterByInertia:
+        params.minInertiaRatio = float(kwargs.get("minInertiaRatio", kwargs.get("min_inertia_ratio", 0.1)))
+        params.maxInertiaRatio = float(kwargs.get("maxInertiaRatio", kwargs.get("max_inertia_ratio", 1.0)))
+
+    detector = cv2.SimpleBlobDetector_create(params)
+    keypoints = detector.detect(img_u8)
+
+    point_sources: List[Dict[str, Any]] = []
+    for kp in keypoints:
+        cx, cy = float(kp.pt[0]), float(kp.pt[1])
+        radius = float(kp.size / 2.0)
+        if radius <= 0:
+            radius = 1.0
+
+        area = float(np.pi * (radius ** 2))
+        perimeter = float(2.0 * np.pi * radius)
+
+        # Extract peak intensity (flux) within the circular footprint
+        y_min = max(0, int(np.floor(cy - radius)))
+        y_max = min(h, int(np.ceil(cy + radius)) + 1)
+        x_min = max(0, int(np.floor(cx - radius)))
+        x_max = min(w, int(np.ceil(cx + radius)) + 1)
+
+        patch = norm_scalar[y_min:y_max, x_min:x_max]
+        if patch.size > 0:
+            yy, xx = np.ogrid[y_min:y_max, x_min:x_max]
+            dist_sq = (xx - cx) ** 2 + (yy - cy) ** 2
+            mask = dist_sq <= max(1.0, radius) ** 2
+            if np.any(mask):
+                flux = float(np.max(patch[mask]))
+            else:
+                flux = float(np.max(patch))
+        else:
+            flux = float(
+                norm_scalar[int(np.clip(round(cy), 0, h - 1)), int(np.clip(round(cx), 0, w - 1))]
+            )
+
+        point_sources.append({
+            "x": cx,
+            "y": cy,
+            "radius": radius,
+            "flux": flux,
+            "area": area,
+            "perimeter": perimeter,
+            "center": (cx, cy),
+            "peak_intensity": flux,
+            "method": "blob",
+        })
+
+    return _sort_point_sources(point_sources, sort_by=sort_by, descending=descending)
+
+
+def detect_point_sources_contours(
+    residual_image: Any,
+    threshold: Optional[Union[float, str]] = None,
+    min_area: float = 1.0,
+    max_area: Optional[float] = None,
+    filter_by_area: bool = True,
+    sort_by: Optional[str] = None,
+    descending: Optional[bool] = None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Detect irregularly shaped point sources using cv2.findContours on a thresholded residual image.
+
+    Calculates exact geometric area, perimeter, centroid, and peak intensity (flux)
+    for asymmetric point sources (e.g. non-circular emission clouds, touching clusters).
+
+    Args:
+        residual_image: 2D quantitative residual scalar array in [0.0, 1.0] or 8-bit image.
+        threshold: Binarization threshold. If None, derived from min_threshold (~20/255).
+                   Accepts float in [0.0, 1.0], [0, 255], or 'otsu' for Otsu thresholding.
+        min_area: Minimum contour area in pixels (default: 1.0).
+        max_area: Maximum contour area in pixels (default: None, unbounded).
+        filter_by_area: Whether to filter contours by area (default: True).
+        sort_by: Optional attribute to sort detections by ('flux', 'area', 'radius', 'x', 'y').
+        descending: Sort direction (default: True for photometric metrics, False for spatial).
+        **kwargs: Additional parameter overrides:
+            - minArea / maxArea / filterByArea: Aliases for area parameters.
+            - min_threshold / minThreshold: Fallback threshold value if threshold is None.
+            - filter_by_circularity / filterByCircularity: Whether to filter by circularity.
+            - min_circularity / max_circularity: Circularity bounds if circularity filtering enabled.
+
+    Returns:
+        List[Dict[str, Any]]: List of metadata dictionaries for each detected point source.
+    """
+    min_area = kwargs.get("minArea", min_area)
+    max_area = kwargs.get("maxArea", max_area)
+    filter_by_area = kwargs.get("filterByArea", filter_by_area)
+
+    norm_scalar = _prepare_scalar_array(residual_image)
+    h, w = norm_scalar.shape
+    img_u8 = np.clip(norm_scalar * 255.0, 0, 255).astype(np.uint8)
+
+    min_a = float(min_area)
+    max_a = float(max_area) if max_area is not None else float(h * w)
+    if min_a > max_a:
+        raise ValueError(f"min_area ({min_a}) must be less than or equal to max_area ({max_a}).")
+
+    # Determine binarization threshold
+    if threshold is None:
+        thresh_candidate = kwargs.get("min_threshold", kwargs.get("minThreshold", 20.0))
+        if 0.0 < float(thresh_candidate) <= 1.0:
+            thresh_u8 = float(thresh_candidate) * 255.0
+        else:
+            thresh_u8 = float(thresh_candidate)
+        thresh_u8 = max(1.0, min(254.0, thresh_u8))
+        _, binary = cv2.threshold(img_u8, thresh_u8, 255, cv2.THRESH_BINARY)
+    elif isinstance(threshold, str) and threshold.lower() == "otsu":
+        _, binary = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    else:
+        thresh_val = float(threshold)
+        if 0.0 < thresh_val <= 1.0:
+            thresh_u8 = thresh_val * 255.0
+        else:
+            thresh_u8 = thresh_val
+        thresh_u8 = max(1.0, min(254.0, thresh_u8))
+        _, binary = cv2.threshold(img_u8, thresh_u8, 255, cv2.THRESH_BINARY)
+
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    point_sources: List[Dict[str, Any]] = []
+    filter_by_circ = bool(kwargs.get("filter_by_circularity", kwargs.get("filterByCircularity", False)))
+    min_circ = float(kwargs.get("min_circularity", kwargs.get("minCircularity", 0.5)))
+    max_circ = float(kwargs.get("max_circularity", kwargs.get("maxCircularity", 1.0)))
+
+    for cnt in contours:
+        raw_area = float(cv2.contourArea(cnt))
+        # Fallback for degenerate single-pixel or line-segment contours
+        area = raw_area if raw_area > 0.0 else float(max(1.0, len(cnt)))
+
+        perimeter = float(cv2.arcLength(cnt, closed=True))
+        if perimeter <= 0.0:
+            perimeter = float(4.0 * np.sqrt(area))
+
+        if filter_by_area:
+            if area < min_a or area > max_a:
+                continue
+
+        if filter_by_circ:
+            circularity = (4.0 * np.pi * area) / (perimeter ** 2) if perimeter > 0 else 0.0
+            if circularity < min_circ or circularity > max_circ:
+                continue
+
+        # Centroid from moments
+        M = cv2.moments(cnt)
+        if M["m00"] != 0:
+            cx = float(M["m10"] / M["m00"])
+            cy = float(M["m01"] / M["m00"])
+        else:
+            cx = float(np.mean(cnt[:, 0, 0]))
+            cy = float(np.mean(cnt[:, 0, 1]))
+
+        # Minimum enclosing circle for radius
+        _, min_enc_r = cv2.minEnclosingCircle(cnt)
+        radius = float(min_enc_r)
+        if radius <= 0:
+            radius = float(np.sqrt(area / np.pi)) if area > 0 else 1.0
+
+        # Peak intensity (flux) within contour mask
+        xb, yb, wb, hb = cv2.boundingRect(cnt)
+        if wb > 0 and hb > 0:
+            local_mask = np.zeros((hb, wb), dtype=np.uint8)
+            cv2.drawContours(local_mask, [cnt - [xb, yb]], -1, 255, -1)
+            local_patch = norm_scalar[yb:yb + hb, xb:xb + wb]
+            if np.any(local_mask > 0):
+                flux = float(np.max(local_patch[local_mask > 0]))
+            else:
+                flux = float(np.max(local_patch))
+        else:
+            flux = float(
+                norm_scalar[int(np.clip(round(cy), 0, h - 1)), int(np.clip(round(cx), 0, w - 1))]
+            )
+
+        point_sources.append({
+            "x": cx,
+            "y": cy,
+            "radius": radius,
+            "flux": flux,
+            "area": area,
+            "perimeter": perimeter,
+            "center": (cx, cy),
+            "peak_intensity": flux,
+            "method": "contours",
+        })
+
+    return _sort_point_sources(point_sources, sort_by=sort_by, descending=descending)
+
+
+def detect_point_sources(
+    residual_image: Any,
+    method: str = "blob",
+    min_threshold: float = 20.0,
+    max_threshold: float = 250.0,
+    filter_by_area: bool = True,
+    min_area: float = 1.0,
+    max_area: float = 5000.0,
+    filter_by_circularity: bool = False,
+    min_circularity: float = 0.5,
+    max_circularity: float = 1.0,
+    threshold: Optional[Union[float, str]] = None,
+    sort_by: Optional[str] = None,
+    descending: Optional[bool] = None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Detect isolated point sources in a residual scalar image and extract their
+    spatial and photometric metadata (x, y, flux, radius, area, perimeter).
+
+    Supports two complementary detection pathways:
+    1. 'blob' (default): Uses cv2.SimpleBlobDetector configured with minThreshold,
+       maxThreshold, and filterByArea to find compact, circular blobs (e.g. stars,
+       wildfire hotspots, discrete emission spikes).
+    2. 'contours': Uses cv2.findContours on a thresholded residual image to detect
+       irregularly shaped point sources and calculate their exact geometric area
+       and perimeter.
+
+    Args:
+        residual_image: 2D quantitative residual scalar array, typically the 'point_source_layer'
+                        from separate_features() normalized in [0.0, 1.0], or 8-bit image.
+        method: Detection method: 'blob' (default) or 'contours'.
+        min_threshold: Minimum intensity threshold for blob detection or binarization.
+                       Accepts either normalized [0.0, 1.0] or 8-bit [0, 255] values (default: 20.0).
+        max_threshold: Maximum intensity threshold for blob detection.
+                       Accepts either normalized [0.0, 1.0] or 8-bit [0, 255] values (default: 250.0).
+        filter_by_area: Whether to filter point sources by pixel area (default: True).
+        min_area: Minimum area in pixels (default: 1.0).
+        max_area: Maximum area in pixels (default: 5000.0).
+        filter_by_circularity: Whether to enforce circularity for blob detection (default: False).
+        min_circularity: Minimum circularity ratio [0.0, 1.0] (default: 0.5).
+        max_circularity: Maximum circularity ratio (default: 1.0).
+        threshold: Explicit binarization threshold for the 'contours' method. If None,
+                   derived from min_threshold. Pass 'otsu' for automatic Otsu thresholding.
+        sort_by: Optional key to sort returned point sources by ('flux', 'area', 'radius', 'x', 'y').
+        descending: Sort direction when sort_by is specified (default: True for flux/area).
+        **kwargs: Parameter aliases and OpenCV-specific overrides:
+            - minThreshold / maxThreshold: Aliases for min_threshold / max_threshold.
+            - filterByArea / minArea / maxArea: Aliases for area parameters.
+            - filterByCircularity / minCircularity: Aliases for circularity parameters.
+            - threshold_step / thresholdStep: Threshold increment for SimpleBlobDetector.
+            - min_repeatability / minRepeatability: Minimum repeatability count (default: 1).
+            - min_dist_between_blobs / minDistBetweenBlobs: Minimum distance in pixels (default: 2.0).
+            - blob_color / blobColor: Target blob color (default: 255 for bright point sources).
+
+    Returns:
+        List[Dict[str, Any]]: List of metadata dictionaries for each detected point source,
+        containing:
+            - "x": float, horizontal center coordinate (sub-pixel precision).
+            - "y": float, vertical center coordinate (sub-pixel precision).
+            - "radius": float, detected or enclosing radius in pixels.
+            - "flux": float, peak intensity in [0.0, 1.0] within the point source.
+            - "area": float, geometric area in pixels squared.
+            - "perimeter": float, contour or circular perimeter in pixels.
+            - "center": Tuple[float, float], (x, y) coordinate pair.
+            - "peak_intensity": float, alias for "flux".
+            - "method": str, detection method used ('blob' or 'contours').
+
+    Raises:
+        TypeError: If residual_image is None or cannot be parsed as a NumPy array.
+        ValueError: If residual_image is empty, not 2D, or parameters are invalid.
+        MorphologyError: If detection method is unrecognized.
+    """
+    if residual_image is None:
+        raise TypeError("residual_image cannot be None.")
+
+    method_clean = str(method).strip().lower()
+    if method_clean in ("blob", "blobs", "blob_detector", "simple_blob"):
+        return detect_point_sources_blob(
+            residual_image=residual_image,
+            min_threshold=min_threshold,
+            max_threshold=max_threshold,
+            filter_by_area=filter_by_area,
+            min_area=min_area,
+            max_area=max_area,
+            filter_by_circularity=filter_by_circularity,
+            min_circularity=min_circularity,
+            max_circularity=max_circularity,
+            sort_by=sort_by,
+            descending=descending,
+            **kwargs,
+        )
+    elif method_clean in ("contours", "contour", "find_contours"):
+        return detect_point_sources_contours(
+            residual_image=residual_image,
+            threshold=threshold,
+            min_area=min_area,
+            max_area=max_area,
+            filter_by_area=filter_by_area,
+            sort_by=sort_by,
+            descending=descending,
+            min_threshold=min_threshold,
+            max_threshold=max_threshold,
+            filter_by_circularity=filter_by_circularity,
+            min_circularity=min_circularity,
+            max_circularity=max_circularity,
+            **kwargs,
+        )
+    else:
+        raise ValueError(
+            f"Unknown point source detection method: '{method}'. Supported methods: 'blob', 'contours'."
+        )
 
 
 __all__ = [
     "MorphologyError",
     "separate_features",
+    "detect_point_sources",
+    "detect_point_sources_blob",
+    "detect_point_sources_contours",
 ]

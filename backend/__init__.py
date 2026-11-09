@@ -4,6 +4,9 @@ The Earth Jukebox - Backend Package.
 
 from backend.morphology import (
     MorphologyError,
+    detect_point_sources,
+    detect_point_sources_blob,
+    detect_point_sources_contours,
     separate_features,
 )
 from backend.pipeline import (
@@ -34,4 +37,7 @@ __all__ = [
     "PipelineError",
     "MorphologyError",
     "separate_features",
+    "detect_point_sources",
+    "detect_point_sources_blob",
+    "detect_point_sources_contours",
 ]
