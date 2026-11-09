@@ -26,6 +26,7 @@ if __name__ == "__main__" and __package__ is None:
 
 import numpy as np
 
+from backend.morphology import separate_features
 from backend.pipeline import (
     ColorbarNotFoundError,
     PipelineError,
@@ -46,6 +47,7 @@ def run_pipeline(
     output_path: Optional[Union[str, Path]] = None,
     method: str = "auto",
     preprocess: bool = False,
+    separate_morphology: bool = False,
     return_metadata: bool = False,
     **kwargs: Any,
 ) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
@@ -59,8 +61,10 @@ def run_pipeline(
         output_path: Optional file path to save the recovered scalar array (.npy or .csv).
         method: Extraction pathway: 'auto' (default), 'colorbar', or 'vq'.
         preprocess: Whether to apply CLAHE and noise reduction preprocessing.
+        separate_morphology: Whether to separate diffuse emission and point source features.
         return_metadata: Whether to return extraction metadata.
-        **kwargs: Additional keyword arguments forwarded to extract_data and preprocess_image.
+        **kwargs: Additional keyword arguments forwarded to extract_data, preprocess_image,
+                  and separate_features.
 
     Returns:
         np.ndarray: Recovered 2D scalar array [0.0, 1.0].
@@ -82,6 +86,10 @@ def run_pipeline(
             **kwargs,
         )
         metadata["preprocessing"] = prep_meta
+
+    if separate_morphology or kwargs.get("separate_features", False):
+        morph_layers = separate_features(scalar_array, return_metadata=True, **kwargs)
+        metadata["morphology"] = morph_layers
 
     if output_path is not None:
         out_p = Path(output_path)
@@ -129,6 +137,11 @@ def main() -> None:
         action="store_true",
         help="Apply CLAHE contrast adjustment and noise reduction preprocessing",
     )
+    parser.add_argument(
+        "--separate-features",
+        action="store_true",
+        help="Separate scalar field into diffuse background and point sources",
+    )
     args = parser.parse_args()
 
     try:
@@ -138,6 +151,7 @@ def main() -> None:
             output_path=args.output,
             method=args.method,
             preprocess=args.preprocess,
+            separate_morphology=args.separate_features,
             return_metadata=True,
         )
         print(

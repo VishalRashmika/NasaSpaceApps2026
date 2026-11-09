@@ -2,6 +2,10 @@
 The Earth Jukebox - Backend Package.
 """
 
+from backend.morphology import (
+    MorphologyError,
+    separate_features,
+)
 from backend.pipeline import (
     ColorbarNotFoundError,
     PipelineError,
@@ -28,4 +32,6 @@ __all__ = [
     "apply_lut_to_image",
     "ColorbarNotFoundError",
     "PipelineError",
+    "MorphologyError",
+    "separate_features",
 ]
