@@ -1136,6 +1136,10 @@ def map_parameters(
     scan_geometry: Optional[Union[str, ScanGeometry]] = None,
     return_dict: bool = False,
     consolidate_notes: bool = False,
+    quantize_notes: bool = True,
+    max_polyphony: Optional[int] = None,
+    diffuse_waveform: Optional[str] = None,
+    point_source_instrument: Optional[str] = None,
     **kwargs: Any,
 ) -> Union[AudioEventList, Dict[str, Any]]:
     """
@@ -1253,6 +1257,13 @@ def map_parameters(
         root_midi=root_midi,
     )
 
+    if not quantize_notes:
+        eff_freq = raw_freq
+        eff_midi = frequency_to_midi(raw_freq)
+    else:
+        eff_freq = quantized_freq
+        eff_midi = quantized_midi
+
     # 5. Build continuous diffuse events (grouped by time step or sampled slices)
     times = scan_path[:, 2]
     unique_times, time_indices = np.unique(times, return_inverse=True)
@@ -1268,8 +1279,8 @@ def map_parameters(
         mask = (time_indices == idx)
         slice_amp = amplitude[mask]
         slice_pan = pan[mask]
-        slice_freq = quantized_freq[mask]
-        slice_midi = quantized_midi[mask]
+        slice_freq = eff_freq[mask]
+        slice_midi = eff_midi[mask]
         slice_x = scan_path[mask, 0]
         slice_y = scan_path[mask, 1]
 
@@ -1285,23 +1296,33 @@ def map_parameters(
         aud_x = slice_x[audible]
         aud_y = slice_y[audible]
 
+        # Polyphony throttling: limit active concurrent voices to top loudest notes
+        if max_polyphony is not None and max_polyphony > 0 and len(aud_amp) > max_polyphony:
+            top_idx = np.argsort(aud_amp)[::-1][:max_polyphony]
+            aud_amp = aud_amp[top_idx]
+            aud_pan = aud_pan[top_idx]
+            aud_freq = aud_freq[top_idx]
+            aud_midi = aud_midi[top_idx]
+            aud_x = aud_x[top_idx]
+            aud_y = aud_y[top_idx]
+
         if consolidate_notes:
             # Keep strongest event per unique MIDI note
             seen_notes: Dict[int, int] = {}
             for i, m in enumerate(aud_midi):
-                m_int = int(m)
+                m_int = int(np.round(m))
                 if m_int not in seen_notes or aud_amp[i] > aud_amp[seen_notes[m_int]]:
                     seen_notes[m_int] = i
 
             for i in seen_notes.values():
-                diffuse_events.append({
+                ev = {
                     "time": float(t),
                     "time_ms": float(t * 1000.0),
                     "duration": step_dt,
                     "duration_ms": float(step_dt * 1000.0),
                     "frequency": float(aud_freq[i]),
                     "pitch": float(aud_freq[i]),
-                    "midi_note": int(aud_midi[i]),
+                    "midi_note": int(np.round(aud_midi[i])) if quantize_notes else float(aud_midi[i]),
                     "velocity": float(aud_amp[i]),
                     "amplitude": float(aud_amp[i]),
                     "pan": float(aud_pan[i]),
@@ -1311,17 +1332,20 @@ def map_parameters(
                     "spatialPosition": {"x": float(aud_x[i]), "y": float(aud_y[i])},
                     "x": float(aud_x[i]),
                     "y": float(aud_y[i]),
-                })
+                }
+                if diffuse_waveform is not None:
+                    ev["waveform"] = diffuse_waveform
+                diffuse_events.append(ev)
         else:
             for amp, p, f, m, x_val, y_val in zip(aud_amp, aud_pan, aud_freq, aud_midi, aud_x, aud_y):
-                diffuse_events.append({
+                ev = {
                     "time": float(t),
                     "time_ms": float(t * 1000.0),
                     "duration": step_dt,
                     "duration_ms": float(step_dt * 1000.0),
                     "frequency": float(f),
                     "pitch": float(f),
-                    "midi_note": int(m),
+                    "midi_note": int(np.round(m)) if quantize_notes else float(m),
                     "velocity": float(amp),
                     "amplitude": float(amp),
                     "pan": float(p),
@@ -1331,7 +1355,10 @@ def map_parameters(
                     "spatialPosition": {"x": float(x_val), "y": float(y_val)},
                     "x": float(x_val),
                     "y": float(y_val),
-                })
+                }
+                if diffuse_waveform is not None:
+                    ev["waveform"] = diffuse_waveform
+                diffuse_events.append(ev)
 
     # 6. Build discrete point source triggers
     point_source_events: List[Dict[str, Any]] = []
@@ -1371,31 +1398,38 @@ def map_parameters(
                 p_val = (2.0 * px / max(1.0, w - 1.0)) - 1.0
                 norm_p = 1.0 - (py / max(1.0, h - 1.0))
 
-            # Musical pitch quantization
+            # Pitch mapping
             f_raw = base_freq * ((max_freq / base_freq) ** float(norm_p))
-            q_freq, q_midi = quantize_to_scale(
-                f_raw,
-                scale_name=scale_name,
-                root_midi=root_midi,
-            )
+            if quantize_notes:
+                q_freq, q_midi = quantize_to_scale(
+                    f_raw,
+                    scale_name=scale_name,
+                    root_midi=root_midi,
+                )
+                ev_freq = float(q_freq)
+                ev_midi = int(q_midi)
+            else:
+                ev_freq = float(f_raw)
+                ev_midi = float(frequency_to_midi(f_raw))
 
             # Volume and duration
             vel = float(compress_dynamic_range(flux, method=compression_method, alpha=compression_alpha, gamma=gamma, noise_floor=0.0))
             dur_sec = float(np.clip(radius * 0.03, 0.05, 0.4))
+            inst_name = point_source_instrument or "point_source_pluck"
 
             point_source_events.append({
                 "time": float(t_event),
                 "time_ms": float(t_event * 1000.0),
                 "duration": dur_sec,
                 "duration_ms": float(dur_sec * 1000.0),
-                "frequency": float(q_freq),
-                "pitch": float(q_freq),
-                "midi_note": int(q_midi),
+                "frequency": ev_freq,
+                "pitch": ev_freq,
+                "midi_note": ev_midi,
                 "velocity": float(vel),
                 "amplitude": float(vel),
                 "pan": float(np.clip(p_val, -1.0, 1.0)),
-                "instrument": "point_source_pluck",
-                "instrumentId": "point_source_pluck",
+                "instrument": inst_name,
+                "instrumentId": inst_name,
                 "layer": "point_source",
                 "spatialPosition": {"x": float(px), "y": float(py)},
                 "x": float(px),

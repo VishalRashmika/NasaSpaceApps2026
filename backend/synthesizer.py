@@ -53,7 +53,7 @@ DEFAULT_SAMPLES_DIR = PROJECT_ROOT / "assets" / "samples"
 # Audio constants
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIFFUSE_WAVEFORM = "blend"
-SUPPORTED_WAVEFORMS = ("sine", "sawtooth", "triangle", "square", "blend", "pad")
+SUPPORTED_WAVEFORMS = ("sine", "sawtooth", "triangle", "square", "blend", "pad", "inharmonic")
 
 # Standard physical sample mappings & aliases
 SAMPLE_ALIASES: Dict[str, str] = {
@@ -481,6 +481,14 @@ def generate_waveform(
         sine_comp = np.sin(wt)
         saw_comp = scipy.signal.sawtooth(wt, width=1.0)
         wave = 0.65 * sine_comp + 0.35 * saw_comp
+    elif wtype in ("inharmonic", "metallic", "science", "dissonant"):
+        # Scientific inharmonic timbre: non-integer partial ratios
+        wave = (
+            0.50 * np.sin(wt)
+            + 0.30 * np.sin(2.756 * wt)
+            + 0.15 * np.sin(5.404 * wt)
+            + 0.10 * np.sin(1.414 * wt)
+        )
     else:
         logger.warning("Unrecognized waveform '%s'; falling back to 'blend'.", waveform_type)
         wave = 0.65 * np.sin(wt) + 0.35 * scipy.signal.sawtooth(wt, width=1.0)
