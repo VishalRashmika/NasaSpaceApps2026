@@ -435,6 +435,211 @@ class TestJsonTimelineExport(unittest.TestCase):
             if os.path.exists(tmp_json):
                 os.unlink(tmp_json)
 
+    def test_export_json_timeline_positional_signature(self):
+        """Verify export_json_timeline(audio_events, metadata, output_path) works with exact positional arguments."""
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp_json = f.name
+
+        try:
+            meta = {
+                "scaleName": "pelog",
+                "tuningSystem": "just_intonation",
+                "scanGeometry": "radial_expansion",
+            }
+            # Positional call: audio_events, metadata, output_path
+            res = export_json_timeline(self.events, meta, tmp_json)
+
+            self.assertIsInstance(res, dict)
+            self.assertTrue(os.path.exists(tmp_json))
+
+            with open(tmp_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.assertEqual(data["metadata"]["scaleName"], "pelog")
+            self.assertEqual(data["metadata"]["tuningSystem"], "just_intonation")
+            self.assertEqual(data["metadata"]["scanGeometry"], "radial_expansion")
+            self.assertEqual(len(data["events"]), 2)
+        finally:
+            if os.path.exists(tmp_json):
+                os.unlink(tmp_json)
+
+    def test_export_json_timeline_path_as_second_positional_arg(self):
+        """Verify passing output_path as 2nd positional argument works seamlessly."""
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp_json = f.name
+
+        try:
+            export_json_timeline(self.events, tmp_json)
+            self.assertTrue(os.path.exists(tmp_json))
+            with open(tmp_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertIn("metadata", data)
+            self.assertIn("events", data)
+        finally:
+            if os.path.exists(tmp_json):
+                os.unlink(tmp_json)
+
+    def test_export_json_timeline_spatial_coordinates_and_optionality(self):
+        """Verify spatialPosition is properly formatted when present and omitted when absent."""
+        events_mixed = [
+            # Event 1: Has explicit spatialPosition dict
+            {
+                "time_ms": 100.0,
+                "duration_ms": 50.0,
+                "pitch": 440.0,
+                "velocity": 0.7,
+                "pan": 0.0,
+                "instrumentId": "diffuse_pad",
+                "spatialPosition": {"x": 12.34, "y": 56.78, "z": 1.0},
+            },
+            # Event 2: Has top-level (x, y) coordinates
+            {
+                "time_ms": 200.0,
+                "duration_ms": 60.0,
+                "pitch": 550.0,
+                "velocity": 0.8,
+                "pan": 0.5,
+                "instrumentId": "point_source_pluck",
+                "x": 30.5,
+                "y": 40.5,
+            },
+            # Event 3: Has tuple spatialPosition
+            {
+                "time_ms": 300.0,
+                "duration_ms": 70.0,
+                "pitch": 660.0,
+                "velocity": 0.9,
+                "pan": -0.5,
+                "instrumentId": "ping",
+                "spatialPosition": (75.2, 85.3),
+            },
+            # Event 4: Pure non-spatial audio event (e.g. background master drone)
+            {
+                "time_ms": 400.0,
+                "duration_ms": 80.0,
+                "pitch": 220.0,
+                "velocity": 0.5,
+                "pan": 0.0,
+                "instrumentId": "sub_bass",
+            },
+        ]
+
+        blueprint = export_json_timeline(events_mixed)
+        evs = blueprint["events"]
+        self.assertEqual(len(evs), 4)
+
+        # Ev 1: Dict spatial coordinates
+        self.assertIn("spatialPosition", evs[0])
+        self.assertAlmostEqual(evs[0]["spatialPosition"]["x"], 12.34)
+        self.assertAlmostEqual(evs[0]["spatialPosition"]["y"], 56.78)
+        self.assertAlmostEqual(evs[0]["spatialPosition"]["z"], 1.0)
+
+        # Ev 2: Top-level coordinates converted
+        self.assertIn("spatialPosition", evs[1])
+        self.assertAlmostEqual(evs[1]["spatialPosition"]["x"], 30.5)
+        self.assertAlmostEqual(evs[1]["spatialPosition"]["y"], 40.5)
+
+        # Ev 3: Tuple coordinates converted
+        self.assertIn("spatialPosition", evs[2])
+        self.assertAlmostEqual(evs[2]["spatialPosition"]["x"], 75.2)
+        self.assertAlmostEqual(evs[2]["spatialPosition"]["y"], 85.3)
+
+        # Ev 4: Omitted when no spatial coordinates exist
+        self.assertNotIn("spatialPosition", evs[3])
+
+        # Metadata records spatial audio capability
+        self.assertTrue(blueprint["metadata"]["spatialAudio"]["supported"])
+        self.assertTrue(blueprint["metadata"]["spatialAudio"]["hasSpatialPositions"])
+
+    def test_export_json_timeline_velocity_and_pitch_normalization(self):
+        """Verify velocity clipping/normalization (e.g. MIDI 0-127) and pitch formatting."""
+        test_events = [
+            {
+                "time": 0.1,
+                "duration": 0.05,
+                "pitch": 69,  # MIDI A4
+                "midi_note": 69,
+                "frequency": 440.0,
+                "velocity": 127.0,  # MIDI max velocity -> normalized to 1.0
+                "pan": 1.5,  # Exceeds +1.0 -> clipped to 1.0
+                "instrumentId": "lead",
+            },
+            {
+                "time": 0.2,
+                "duration": 0.05,
+                "pitch": 261.63,
+                "velocity": -0.5,  # Below 0.0 -> clipped to 0.0
+                "pan": -2.0,  # Below -1.0 -> clipped to -1.0
+                "instrumentId": "bass",
+            },
+        ]
+
+        blueprint = export_json_timeline(test_events)
+        ev0 = blueprint["events"][0]
+        self.assertAlmostEqual(ev0["velocity"], 1.0, places=3)
+        self.assertAlmostEqual(ev0["pan"], 1.0, places=3)
+        self.assertEqual(ev0["pitch"], 69.0)
+        self.assertEqual(ev0["midiNote"], 69)
+        self.assertAlmostEqual(ev0["frequency"], 440.0)
+
+        ev1 = blueprint["events"][1]
+        self.assertAlmostEqual(ev1["velocity"], 0.0, places=3)
+        self.assertAlmostEqual(ev1["pan"], -1.0, places=3)
+
+    def test_export_json_timeline_tonejs_structure(self):
+        """Verify Tone.js frontend requirements: ms timings, Tone.Part second helpers, chronologic sort."""
+        unsorted_events = [
+            {"time_ms": 500.0, "duration_ms": 100.0, "pitch": 600.0, "instrumentId": "inst2"},
+            {"time_ms": 100.0, "duration_ms": 200.0, "pitch": 300.0, "instrumentId": "inst1"},
+        ]
+
+        blueprint = export_json_timeline(unsorted_events)
+        events = blueprint["events"]
+
+        # Chronologically sorted by time
+        self.assertLess(events[0]["time"], events[1]["time"])
+        self.assertEqual(events[0]["time"], 100.0)
+        self.assertEqual(events[1]["time"], 500.0)
+
+        # Tone.js seconds helpers for native Transport scheduling
+        self.assertAlmostEqual(events[0]["timeSeconds"], 0.1)
+        self.assertAlmostEqual(events[0]["durationSeconds"], 0.2)
+        self.assertAlmostEqual(events[1]["timeSeconds"], 0.5)
+        self.assertAlmostEqual(events[1]["durationSeconds"], 0.1)
+
+    def test_export_json_timeline_audio_event_list_integration(self):
+        """Verify export_json_timeline directly handles AudioEventList produced by map_parameters."""
+        w, h = 40, 30
+        scalar = np.ones((h, w), dtype=np.float32) * 0.7
+        scan_path = generate_scan_path("horizontal_sweep", w, h, duration_seconds=1.0, num_steps=10)
+        events = map_parameters(scan_path, scalar, scale_name="c_major_pentatonic")
+
+        blueprint = export_json_timeline(events)
+        self.assertIn("metadata", blueprint)
+        self.assertIn("events", blueprint)
+        self.assertEqual(blueprint["metadata"]["scaleName"], "c_major_pentatonic")
+        self.assertEqual(blueprint["metadata"]["scanGeometry"], "horizontal_sweep")
+        self.assertGreater(blueprint["metadata"]["totalEvents"], 0)
+        self.assertGreater(len(blueprint["events"]), 0)
+
+        first_event = blueprint["events"][0]
+        self.assertIn("time", first_event)
+        self.assertIn("duration", first_event)
+        self.assertIn("pitch", first_event)
+        self.assertIn("velocity", first_event)
+        self.assertIn("pan", first_event)
+        self.assertIn("instrumentId", first_event)
+
+    def test_export_json_timeline_empty_input(self):
+        """Verify export_json_timeline gracefully handles empty or None input."""
+        res_empty = export_json_timeline([])
+        self.assertEqual(res_empty["metadata"]["totalEvents"], 0)
+        self.assertEqual(res_empty["events"], [])
+
+        res_none = export_json_timeline(None)
+        self.assertEqual(res_none["metadata"]["totalEvents"], 0)
+        self.assertEqual(res_none["events"], [])
+
 
 class TestEndToEndSonificationIntegration(unittest.TestCase):
     """End-to-end integration test connecting Scanner, Morphology, and Synthesizer."""

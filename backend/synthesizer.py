@@ -1015,9 +1015,31 @@ def synthesize_wav(
 # JSON Timeline Blueprint Export (Tone.js / Frontend Extensibility)
 # =============================================================================
 
+def _serialize_json_value(obj: Any) -> Any:
+    """Helper to ensure numpy types, enums, and collections serialize cleanly to JSON."""
+    if isinstance(obj, (np.floating, float)):
+        val = float(obj)
+        return 0.0 if math.isnan(val) or math.isinf(val) else val
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return [_serialize_json_value(x) for x in obj.tolist()]
+    elif isinstance(obj, dict):
+        return {str(k): _serialize_json_value(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_serialize_json_value(v) for v in obj]
+    elif hasattr(obj, "value"):
+        return obj.value
+    elif hasattr(obj, "to_dict"):
+        return _serialize_json_value(obj.to_dict())
+    return obj
+
+
 def export_json_timeline(
     audio_events: Any,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Union[Dict[str, Any], str, Path]] = None,
     output_path: Optional[Union[str, Path]] = None,
     tuning_system: str = "12-EDO",
     scale_name: Optional[str] = None,
@@ -1027,47 +1049,101 @@ def export_json_timeline(
     """
     Export a rich JSON timeline blueprint for frontend sonification renderers (Tone.js, Web Audio).
 
+    Decouples visual data processing from real-time audio synthesis, providing structured
+    event sequences and global metadata (tunings, scan geometry, spatial coordinates)
+    ready for consumption by Tone.js Parts, Sequences, or Transport schedulers.
+
     Structure:
-    - metadata: Global parameters (scaleName, tuningSystem, scanGeometry, durationMs).
-    - events: Ordered event list, each with:
-        - time: Timestamp in milliseconds.
-        - duration: Duration in milliseconds.
-        - pitch: Pitch in Hz or MIDI note number.
+    - metadata: Global parameters:
+        - scaleName: Musical scale (e.g. 'c_major_pentatonic', 'dorian', 'slendro').
+        - tuningSystem: Tuning system for microtonal/non-Western scales (e.g. '12-EDO', 'just_intonation').
+        - scanGeometry: Playhead scan pattern ('horizontal_sweep', 'vertical_sweep', 'radar_sweep', 'radial_expansion').
+        - durationSeconds: Total sonification duration in seconds.
+        - durationMs: Total duration in milliseconds.
+        - totalEvents: Count of scheduled audio events.
+        - spatialAudio: Metadata descriptor for 2D/3D spatial rendering.
+    - events: Ordered event list sorted chronologically:
+        - time: Timestamp in milliseconds (Tone.js timing).
+        - duration: Note duration in milliseconds.
+        - pitch: Frequency in Hz or MIDI note number.
         - velocity: Normalized volume in [0.0, 1.0].
         - pan: Stereo pan in [-1.0, 1.0].
-        - instrumentId: Instrument or physical sample identifier.
-        - spatialPosition: Optional (x, y) coordinates on canvas.
+        - instrumentId: Instrument / synth / sample identifier.
+        - spatialPosition: Optional {x, y} coordinate dictionary.
+        - timeSeconds / durationSeconds: Convenience fields for Tone.js native seconds clock.
 
     Args:
-        audio_events: Sequence of event dictionaries or an AudioEventList instance.
-        metadata: Optional global metadata dictionary.
+        audio_events: Sequence of event dictionaries, dict with events/diffuse_events,
+                      or an AudioEventList instance.
+        metadata: Global metadata dictionary, or file path if passed positionally.
         output_path: Optional destination .json file path.
         tuning_system: Musical tuning system (default: '12-EDO').
         scale_name: Name of scale (e.g. 'c_major_pentatonic').
         scan_geometry: Playhead scan geometry (e.g. 'horizontal_sweep').
-        indent: JSON indentation formatting.
+        indent: JSON indentation formatting (default: 2).
 
     Returns:
         Dict[str, Any]: Formatted JSON blueprint dictionary.
     """
+    # Allow passing output_path as the second positional argument
+    if isinstance(metadata, (str, Path)) and output_path is None:
+        output_path = metadata
+        metadata = None
+
     events_raw: List[Dict[str, Any]] = []
     meta_src: Dict[str, Any] = {}
 
     if hasattr(audio_events, "metadata"):
-        meta_src = dict(getattr(audio_events, "metadata", {}))
+        meta_src = dict(getattr(audio_events, "metadata", {}) or {})
         events_raw = list(audio_events)
     elif isinstance(audio_events, dict):
-        meta_src = dict(audio_events.get("metadata", {}))
-        events_raw = list(audio_events.get("events", []))
+        meta_src = dict(audio_events.get("metadata", {}) or {})
+        if "events" in audio_events:
+            events_raw = list(audio_events.get("events", []) or [])
+        elif "diffuse_events" in audio_events or "point_source_events" in audio_events:
+            events_raw = list(audio_events.get("diffuse_events", []) or []) + list(audio_events.get("point_source_events", []) or [])
     elif isinstance(audio_events, (list, tuple)):
         events_raw = list(audio_events)
+    elif audio_events is None:
+        events_raw = []
 
-    if metadata is not None:
+    if isinstance(metadata, dict):
         meta_src.update(metadata)
 
-    resolved_scale = scale_name or meta_src.get("scale_name", meta_src.get("scaleName", "c_major_pentatonic"))
-    resolved_geometry = scan_geometry or meta_src.get("geometry_type", meta_src.get("scanGeometry", "horizontal_sweep"))
-    resolved_tuning = meta_src.get("tuningSystem", tuning_system)
+    # Resolve scale name
+    resolved_scale = (
+        scale_name
+        or meta_src.get("scaleName")
+        or meta_src.get("scale_name")
+        or meta_src.get("scale")
+        or "c_major_pentatonic"
+    )
+
+    # Resolve tuning system
+    if tuning_system != "12-EDO":
+        resolved_tuning = tuning_system
+    else:
+        resolved_tuning = (
+            meta_src.get("tuningSystem")
+            or meta_src.get("tuning_system")
+            or meta_src.get("tuning")
+            or "12-EDO"
+        )
+
+    # Resolve scan geometry
+    if scan_geometry is not None:
+        raw_geom = scan_geometry
+    else:
+        raw_geom = (
+            meta_src.get("scanGeometry")
+            or meta_src.get("scan_geometry")
+            or meta_src.get("geometry_type")
+            or meta_src.get("geometry")
+            or "horizontal_sweep"
+        )
+    if hasattr(raw_geom, "value"):
+        raw_geom = raw_geom.value
+    resolved_geometry = str(raw_geom)
 
     formatted_events: List[Dict[str, Any]] = []
     max_time_ms = 0.0
@@ -1076,11 +1152,46 @@ def export_json_timeline(
         if not isinstance(ev, dict):
             continue
 
-        t_ms = float(ev.get("time_ms", ev.get("time", 0.0) * 1000.0))
-        d_ms = float(ev.get("duration_ms", ev.get("duration", 0.1) * 1000.0))
-        pitch_val = float(ev.get("pitch", ev.get("frequency", ev.get("midi_note", 440.0))))
-        vel_val = float(np.clip(ev.get("velocity", ev.get("amplitude", 0.8)), 0.0, 1.0))
-        pan_val = float(np.clip(ev.get("pan", 0.0), -1.0, 1.0))
+        # Millisecond timing calculation
+        if "time_ms" in ev:
+            t_ms = float(ev["time_ms"])
+        elif "time" in ev:
+            t_ms = float(ev["time"]) * 1000.0
+        else:
+            t_ms = 0.0
+
+        if "duration_ms" in ev:
+            d_ms = float(ev["duration_ms"])
+        elif "duration" in ev:
+            d_ms = float(ev["duration"]) * 1000.0
+        else:
+            d_ms = 100.0
+
+        # Pitch (Hz or MIDI note number)
+        pitch_raw = ev.get("pitch", ev.get("frequency", ev.get("midi_note", 440.0)))
+        try:
+            pitch_val = float(pitch_raw)
+        except (ValueError, TypeError):
+            pitch_val = 440.0
+
+        # Velocity in [0.0, 1.0] (auto-normalizing 0-127 MIDI scale if detected)
+        vel_raw = ev.get("velocity", ev.get("amplitude", 0.8))
+        try:
+            vel_num = float(vel_raw)
+            if vel_num > 1.0 and vel_num <= 127.0:
+                vel_num = vel_num / 127.0
+            vel_val = float(np.clip(vel_num, 0.0, 1.0))
+        except (ValueError, TypeError):
+            vel_val = 0.8
+
+        # Pan in [-1.0, 1.0]
+        pan_raw = ev.get("pan", 0.0)
+        try:
+            pan_val = float(np.clip(float(pan_raw), -1.0, 1.0))
+        except (ValueError, TypeError):
+            pan_val = 0.0
+
+        # Instrument Identifier
         inst_id = str(ev.get("instrumentId", ev.get("instrument", "default")))
 
         entry: Dict[str, Any] = {
@@ -1092,45 +1203,111 @@ def export_json_timeline(
             "instrumentId": inst_id,
         }
 
-        if "spatialPosition" in ev and isinstance(ev["spatialPosition"], dict):
-            entry["spatialPosition"] = {
-                "x": round(float(ev["spatialPosition"].get("x", 0.0)), 2),
-                "y": round(float(ev["spatialPosition"].get("y", 0.0)), 2),
-            }
+        # Spatial Position (optional x, y, and optional z)
+        spatial_pos = None
+        if "spatialPosition" in ev:
+            sp = ev["spatialPosition"]
+            if isinstance(sp, dict):
+                spatial_pos = {
+                    "x": round(float(sp.get("x", 0.0)), 2),
+                    "y": round(float(sp.get("y", 0.0)), 2),
+                }
+                if "z" in sp:
+                    spatial_pos["z"] = round(float(sp["z"]), 2)
+            elif isinstance(sp, (list, tuple)) and len(sp) >= 2:
+                spatial_pos = {
+                    "x": round(float(sp[0]), 2),
+                    "y": round(float(sp[1]), 2),
+                }
+                if len(sp) >= 3:
+                    spatial_pos["z"] = round(float(sp[2]), 2)
         elif "x" in ev and "y" in ev:
-            entry["spatialPosition"] = {
+            spatial_pos = {
                 "x": round(float(ev["x"]), 2),
                 "y": round(float(ev["y"]), 2),
             }
+            if "z" in ev:
+                spatial_pos["z"] = round(float(ev["z"]), 2)
+
+        if spatial_pos is not None:
+            entry["spatialPosition"] = spatial_pos
+
+        # Tone.js scheduling helpers
+        entry["timeSeconds"] = round(t_ms / 1000.0, 4)
+        entry["durationSeconds"] = round(d_ms / 1000.0, 4)
+
+        # Extended pitch descriptors (useful for Tone.js and microtonal TuneJS)
+        if "midi_note" in ev or "midiNote" in ev or "midi" in ev:
+            raw_midi = ev.get("midi_note", ev.get("midiNote", ev.get("midi")))
+            try:
+                entry["midiNote"] = int(round(float(raw_midi)))
+            except (ValueError, TypeError):
+                pass
+
+        if "frequency" in ev:
+            try:
+                entry["frequency"] = round(float(ev["frequency"]), 2)
+            except (ValueError, TypeError):
+                pass
 
         if "layer" in ev:
-            entry["layer"] = ev["layer"]
+            entry["layer"] = str(ev["layer"])
 
         formatted_events.append(entry)
         max_time_ms = max(max_time_ms, t_ms + d_ms)
 
-    formatted_events.sort(key=lambda e: e["time"])
+    # Sort events chronologically, with diffuse layers scheduled first on simultaneous triggers
+    formatted_events.sort(key=lambda e: (e["time"], 0 if e.get("layer") == "diffuse" else 1))
 
-    dur_seconds = float(meta_src.get("duration_seconds", max_time_ms / 1000.0))
+    dur_seconds = float(
+        meta_src.get(
+            "durationSeconds",
+            meta_src.get("duration_seconds", meta_src.get("duration", max_time_ms / 1000.0)),
+        )
+    )
+    if dur_seconds <= 0.0 and max_time_ms > 0:
+        dur_seconds = max_time_ms / 1000.0
+
+    has_spatial = any("spatialPosition" in ev for ev in formatted_events)
+
+    excluded_keys = {
+        "scale_name", "scaleName", "scale",
+        "geometry_type", "scanGeometry", "scan_geometry", "geometry",
+        "tuningSystem", "tuning_system", "tuning",
+        "duration_seconds", "durationSeconds", "duration",
+        "duration_ms", "durationMs", "total_events", "totalEvents",
+        "spatialAudio",
+    }
+    extra_meta = {str(k): _serialize_json_value(v) for k, v in meta_src.items() if k not in excluded_keys}
+
+    blueprint_metadata: Dict[str, Any] = {
+        "scaleName": resolved_scale,
+        "scale_name": resolved_scale,
+        "tuningSystem": resolved_tuning,
+        "tuning_system": resolved_tuning,
+        "scanGeometry": resolved_geometry,
+        "scan_geometry": resolved_geometry,
+        "durationSeconds": round(dur_seconds, 4),
+        "durationMs": round(dur_seconds * 1000.0, 2),
+        "totalEvents": len(formatted_events),
+        "spatialAudio": {
+            "supported": True,
+            "hasSpatialPositions": has_spatial,
+        },
+        **extra_meta,
+    }
 
     blueprint: Dict[str, Any] = {
-        "metadata": {
-            "scaleName": resolved_scale,
-            "tuningSystem": resolved_tuning,
-            "scanGeometry": resolved_geometry,
-            "durationSeconds": dur_seconds,
-            "durationMs": round(dur_seconds * 1000.0, 2),
-            "totalEvents": len(formatted_events),
-            **{k: v for k, v in meta_src.items() if k not in ("scale_name", "scaleName", "geometry_type", "scanGeometry", "tuningSystem")},
-        },
+        "metadata": blueprint_metadata,
         "events": formatted_events,
     }
 
     if output_path is not None:
         out_p = Path(output_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
-        out_p.write_text(json.dumps(blueprint, indent=indent), encoding="utf-8")
-        logger.info("Exported JSON timeline blueprint to %s", out_p)
+        serialized_json = json.dumps(blueprint, indent=indent, default=_serialize_json_value)
+        out_p.write_text(serialized_json, encoding="utf-8")
+        logger.info("Exported JSON timeline blueprint with %d events to %s", len(formatted_events), out_p)
 
     return blueprint
 
