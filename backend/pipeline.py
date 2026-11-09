@@ -2,23 +2,31 @@
 The Earth Jukebox - Pipeline Module
 Scientific sonification data extraction and image processing pipeline.
 
-This module implements the primary pathway (Colorbar Parsing) and associated
-utilities for recovering quantitative scalar datasets (0.0 to 1.0) from legacy
-NASA RGB imagery without underlying metadata, mirroring the Chandra X-ray Center
-methodology of assigning energies to wavelengths.
+This module implements the dual-pathway architecture for recovering quantitative
+scalar datasets (0.0 to 1.0) from legacy NASA RGB imagery without underlying metadata,
+mirroring the Chandra X-ray Center methodology of assigning energies to wavelengths:
+1. Primary Pathway: Colorbar Parsing (direct RGB-to-scalar LUT recovery).
+2. Fallback Pathway: Vector Quantization (reverse-engineering artist palette via scipy.cluster.vq).
 """
 
+import logging
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 import cv2
+import matplotlib
+import matplotlib.cm as cm
 import numpy as np
+from scipy.cluster.vq import vq
 
 try:
     from scipy.spatial import cKDTree
 except ImportError:
     cKDTree = None
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineError(Exception):
@@ -429,3 +437,262 @@ def extract_data_colorbar(
         return scalar_array, metadata
 
     return scalar_array
+
+
+# =============================================================================
+# Fallback Data Extraction Pathway: Vector Quantization
+# =============================================================================
+# Architectural Note: Universal Palette Recovery & The 'unmap' Package
+# -----------------------------------------------------------------------------
+# When NASA imagery lacks an explicit visual colorbar/legend, recovering
+# quantitative scalar data requires reverse-engineering the artist's colormap
+# gradient (nearest-neighbor palette matching).
+#
+# Potential Alternative:
+# The 'unmap' package (https://github.com/stefanv/unmap or similar colormap unmapping tools)
+# provides an alternative approach for inverse colormap lookup by computing distances in
+# perceptual color spaces (such as CAM02-UCS or CIELAB) against known scientific palettes.
+#
+# In this pipeline, we implement Vector Quantization via scipy.cluster.vq as our universal,
+# dependency-free fallback pathway. This treats data recovery as a nearest-neighbor
+# classification problem, directly matching each pixel to its closest code book entry.
+# =============================================================================
+
+
+def generate_colormap_codebook(
+    colormap_name: str = "jet",
+    num_samples: int = 256,
+    scale_to_255: bool = True,
+) -> np.ndarray:
+    """
+    Programmatically generate a "code book" of RGB tuples representing the theoretical
+    gradient of colormap_name using matplotlib.cm.
+
+    Args:
+        colormap_name: Name of the matplotlib colormap (e.g., 'jet', 'viridis', 'plasma').
+        num_samples: Number of discrete entries in the code book (default: 256).
+        scale_to_255: If True, scale RGB values to [0.0, 255.0] to match standard uint8 pixels.
+                      If False, keep values normalized in [0.0, 1.0].
+
+    Returns:
+        np.ndarray: float32 array of shape (num_samples, 3) representing RGB tuples.
+
+    Raises:
+        ValueError: If colormap_name is invalid or cannot be resolved.
+    """
+    if num_samples < 1:
+        raise ValueError(f"num_samples must be >= 1, received {num_samples}")
+
+    cmap = None
+    candidates = [colormap_name]
+    if isinstance(colormap_name, str):
+        candidates.append(colormap_name.lower())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for name in candidates:
+            if hasattr(matplotlib, "colormaps"):
+                try:
+                    cmap = matplotlib.colormaps[name]
+                    break
+                except (KeyError, ValueError):
+                    pass
+            try:
+                cmap = cm.get_cmap(name)
+                break
+            except Exception:
+                pass
+
+    if cmap is None:
+        raise ValueError(f"Unknown or unsupported colormap '{colormap_name}'.")
+
+    # Generate theoretical gradient values along [0.0, 1.0]
+    scalars = np.linspace(0.0, 1.0, num_samples, endpoint=True)
+    rgba = cmap(scalars)
+    rgb = rgba[:, :3].astype(np.float32)
+
+    if scale_to_255:
+        rgb = rgb * 255.0
+
+    return rgb
+
+
+def extract_data_vector_quantization(
+    image_path: Union[str, Path, np.ndarray],
+    colormap_name: str = "jet",
+    num_samples: int = 256,
+    return_metadata: bool = False,
+) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
+    """
+    Fallback Data Extraction Pathway: Vector Quantization.
+
+    Treats quantitative data recovery as a nearest-neighbor classification problem,
+    reverse-engineering the artist's palette by matching image pixels to the closest
+    entry in a synthetic theoretical colormap code book.
+
+    Note: The 'unmap' package provides an alternative inverse colormap lookup method.
+    Here, vector quantization via scipy.cluster.vq serves as our universal, lightweight
+    fallback.
+
+    Pipeline Steps:
+    1. Programmatically generate a "code book" of 256 RGB tuples representing the
+       theoretical gradient of colormap_name using matplotlib.cm.
+    2. Reshape the input image into a flat list of pixel RGB values.
+    3. Use scipy.cluster.vq.vq to match every pixel to the closest code book entry.
+    4. Map the resulting indices linearly to a normalized 0.0 - 1.0 scalar array
+       and reshape to original dimensions.
+
+    Args:
+        image_path: Path to the image file or loaded 3-channel BGR NumPy array.
+        colormap_name: Colormap name to reverse-engineer (default: 'jet').
+        num_samples: Number of entries in the synthetic code book (default: 256).
+        return_metadata: If True, returns (scalar_array, metadata_dict).
+
+    Returns:
+        np.ndarray: 2D float32 array of shape (H, W) with quantitative scalar values in [0.0, 1.0].
+        (Optional) Dict[str, Any]: If return_metadata is True, returns dictionary containing
+            'colormap_name', 'code_book', 'distortion', 'mean_distortion', 'image_shape',
+            and 'method'.
+
+    Raises:
+        FileNotFoundError: If the specified image path does not exist.
+        ValueError: If colormap_name is unknown or image decoding fails.
+        TypeError: If input type is unsupported.
+    """
+    # 1. Programmatically generate code book of 256 RGB tuples using matplotlib.cm
+    code_book = generate_colormap_codebook(
+        colormap_name=colormap_name,
+        num_samples=num_samples,
+        scale_to_255=True,
+    )
+
+    # 2. Reshape input image into a flat list of pixel RGB values
+    image_bgr = load_image(image_path)
+    img_h, img_w = image_bgr.shape[:2]
+
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    flat_pixels = image_rgb.reshape(-1, 3).astype(np.float32)
+
+    # If input array was already float in [0.0, 1.0], scale to match code book [0.0, 255.0]
+    if image_rgb.dtype != np.uint8 and image_rgb.max() <= 1.0:
+        flat_pixels = flat_pixels * 255.0
+
+    # 3. Use scipy.cluster.vq.vq to match every pixel to the closest code book entry
+    indices, distortion = vq(flat_pixels, code_book)
+
+    # 4. Map resulting indices linearly to normalized 0.0 - 1.0 scalar array and reshape
+    if num_samples > 1:
+        scalar_flat = indices.astype(np.float32) / float(num_samples - 1)
+    else:
+        scalar_flat = np.zeros(len(indices), dtype=np.float32)
+
+    scalar_2d = scalar_flat.reshape(img_h, img_w).astype(np.float32)
+
+    if return_metadata:
+        metadata = {
+            "colormap_name": colormap_name,
+            "code_book": code_book,
+            "distortion": distortion.reshape(img_h, img_w).astype(np.float32),
+            "mean_distortion": float(np.mean(distortion)),
+            "image_shape": (img_h, img_w),
+            "method": "vector_quantization",
+        }
+        return scalar_2d, metadata
+
+    return scalar_2d
+
+
+# =============================================================================
+# Pipeline Orchestrator: Dual-Pathway Extraction
+# =============================================================================
+
+
+def extract_data(
+    image_path: Union[str, Path, np.ndarray],
+    colormap_name: str = "jet",
+    num_samples: int = 256,
+    method: str = "auto",
+    mask_colorbar: bool = True,
+    color_space: str = "LAB",
+    return_metadata: bool = False,
+    **colorbar_kwargs: Any,
+) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
+    """
+    Pipeline Orchestrator: Dual-Pathway Quantitative Data Extraction.
+
+    Attempts the primary pathway (Colorbar Parsing) first. If no colorbar exists
+    or detection fails, automatically falls back to Vector Quantization (reverse-engineering
+    the artist's palette).
+
+    Note: The 'unmap' package (https://github.com/stefanv/unmap) provides an alternative
+    inversion approach; vector quantization via scipy.cluster.vq is our native, lightweight
+    fallback solution.
+
+    Args:
+        image_path: Path to the image file or loaded NumPy array.
+        colormap_name: Colormap name for Vector Quantization fallback (default: 'jet').
+        num_samples: Number of entries in synthetic LUT / code book (default: 256).
+        method: Extraction pathway:
+            - 'auto': Try colorbar first; fall back to VQ if missing/undetected (default).
+            - 'colorbar': Use only colorbar parsing (raises ColorbarNotFoundError if absent).
+            - 'vq' or 'vector_quantization': Use only vector quantization.
+        mask_colorbar: Whether to mask out colorbar area when using colorbar parsing.
+        color_space: Distance comparison space for colorbar lookup ('LAB' or 'RGB').
+        return_metadata: If True, returns (scalar_array, metadata_dict).
+        **colorbar_kwargs: Extra keyword arguments forwarded to detect_colorbar_bounding_box.
+
+    Returns:
+        np.ndarray: 2D float32 array of shape (H, W) in [0.0, 1.0].
+        (Optional) Dict[str, Any]: Extraction metadata dictionary.
+    """
+    method_lower = method.lower()
+    if method_lower not in ("auto", "colorbar", "vq", "vector_quantization"):
+        raise ValueError(
+            f"Unknown extraction method '{method}'. Choose 'auto', 'colorbar', or 'vq'."
+        )
+
+    # If VQ is explicitly requested, invoke directly
+    if method_lower in ("vq", "vector_quantization"):
+        return extract_data_vector_quantization(
+            image_path=image_path,
+            colormap_name=colormap_name,
+            num_samples=num_samples,
+            return_metadata=return_metadata,
+        )
+
+    # Primary pathway: Colorbar parsing
+    try:
+        scalar_array, metadata = extract_data_colorbar(
+            image_path=image_path,
+            num_samples=num_samples,
+            mask_colorbar=mask_colorbar,
+            color_space=color_space,
+            return_metadata=True,
+            **colorbar_kwargs,
+        )
+        metadata["method"] = "colorbar"
+        if return_metadata:
+            return scalar_array, metadata
+        return scalar_array
+
+    except ColorbarNotFoundError as err:
+        if method_lower == "colorbar":
+            raise
+
+        logger.info(
+            "Colorbar not detected (%s). Falling back to Vector Quantization (colormap='%s').",
+            err,
+            colormap_name,
+        )
+
+        scalar_array, metadata = extract_data_vector_quantization(
+            image_path=image_path,
+            colormap_name=colormap_name,
+            num_samples=num_samples,
+            return_metadata=True,
+        )
+        metadata["fallback_from_colorbar_error"] = str(err)
+        if return_metadata:
+            return scalar_array, metadata
+        return scalar_array
+

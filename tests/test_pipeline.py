@@ -9,13 +9,17 @@ import numpy as np
 import cv2
 
 from backend.pipeline import (
+    extract_data,
     extract_data_colorbar,
+    extract_data_vector_quantization,
+    generate_colormap_codebook,
     detect_colorbar_bounding_box,
     build_colorbar_lut,
     apply_lut_to_image,
     ColorbarNotFoundError,
     load_image,
 )
+from backend.main import run_pipeline
 
 
 class TestColorbarPipeline(unittest.TestCase):
@@ -206,6 +210,179 @@ class TestColorbarPipeline(unittest.TestCase):
         result = extract_data_colorbar(canvas)
         self.assertIsInstance(result, np.ndarray)
         self.assertEqual(result.shape, canvas.shape[:2])
+
+
+class TestVectorQuantizationPipeline(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _create_synthetic_visualization(
+        self,
+        height: int = 100,
+        width: int = 120,
+        colormap_name: str = "jet",
+    ):
+        """
+        Creates a synthetic NASA scientific image without any colorbar or legend.
+        Returns the BGR image (OpenCV format) and the true ground-truth scalar array [0, 1].
+        """
+        import matplotlib
+        import matplotlib.cm as cm
+
+        # Retrieve colormap
+        if hasattr(matplotlib, "colormaps") and colormap_name in matplotlib.colormaps:
+            cmap = matplotlib.colormaps[colormap_name]
+        else:
+            cmap = cm.get_cmap(colormap_name)
+
+        # Ground truth continuous scalar field [0.0, 1.0]
+        y, x = np.mgrid[0:height, 0:width]
+        true_scalar = (
+            (x / float(width)) * 0.6 + (y / float(height)) * 0.4
+        ).astype(np.float32)
+
+        # Map to theoretical RGBA via matplotlib colormap
+        rgba = cmap(true_scalar)
+        rgb_u8 = np.clip(np.round(rgba[:, :, :3] * 255.0), 0, 255).astype(np.uint8)
+
+        # OpenCV expects BGR format
+        bgr_u8 = cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2BGR)
+        return bgr_u8, true_scalar
+
+    def test_generate_colormap_codebook(self):
+        """Test generation of the theoretical gradient codebook via matplotlib.cm."""
+        codebook_255 = generate_colormap_codebook("jet", num_samples=256, scale_to_255=True)
+        self.assertEqual(codebook_255.shape, (256, 3))
+        self.assertEqual(codebook_255.dtype, np.float32)
+        self.assertGreaterEqual(float(codebook_255.min()), 0.0)
+        self.assertLessEqual(float(codebook_255.max()), 255.0)
+
+        # Test normalized [0.0, 1.0]
+        codebook_unit = generate_colormap_codebook("jet", num_samples=256, scale_to_255=False)
+        self.assertEqual(codebook_unit.shape, (256, 3))
+        self.assertGreaterEqual(float(codebook_unit.min()), 0.0)
+        self.assertLessEqual(float(codebook_unit.max()), 1.0)
+
+        # Test case-insensitivity
+        cb_upper = generate_colormap_codebook("JET", num_samples=64)
+        self.assertEqual(cb_upper.shape, (64, 3))
+
+        # Test invalid colormap
+        with self.assertRaises(ValueError):
+            generate_colormap_codebook("completely_invalid_colormap_name")
+
+    def test_extract_data_vector_quantization_jet(self):
+        """Test vector quantization data extraction on a colormapped image without colorbar."""
+        bgr_img, true_scalar = self._create_synthetic_visualization(
+            height=80, width=100, colormap_name="jet"
+        )
+        recovered = extract_data_vector_quantization(bgr_img, colormap_name="jet")
+
+        self.assertIsInstance(recovered, np.ndarray)
+        self.assertEqual(recovered.shape, true_scalar.shape)
+        self.assertEqual(recovered.dtype, np.float32)
+        self.assertGreaterEqual(float(recovered.min()), 0.0)
+        self.assertLessEqual(float(recovered.max()), 1.0)
+
+        # Reconstructed scalar field should match ground truth with very low MAE (< 0.02)
+        mae = float(np.mean(np.abs(recovered - true_scalar)))
+        self.assertLess(mae, 0.02, f"Vector Quantization MAE {mae} exceeded 0.02")
+
+    def test_extract_data_vector_quantization_other_colormaps(self):
+        """Test vector quantization across different scientific colormaps (viridis, plasma, turbo)."""
+        for cm_name in ("viridis", "plasma", "turbo"):
+            bgr_img, true_scalar = self._create_synthetic_visualization(
+                height=60, width=80, colormap_name=cm_name
+            )
+            recovered = extract_data_vector_quantization(bgr_img, colormap_name=cm_name)
+            mae = float(np.mean(np.abs(recovered - true_scalar)))
+            self.assertLess(mae, 0.02, f"Colormap '{cm_name}' MAE {mae} exceeded 0.02")
+
+    def test_extract_data_vector_quantization_file_path_and_metadata(self):
+        """Test VQ with image file path input and metadata dictionary return."""
+        bgr_img, true_scalar = self._create_synthetic_visualization(
+            height=50, width=60, colormap_name="jet"
+        )
+        img_path = os.path.join(self.temp_dir.name, "vq_test.png")
+        cv2.imwrite(img_path, bgr_img)
+
+        recovered, metadata = extract_data_vector_quantization(
+            img_path, colormap_name="jet", return_metadata=True
+        )
+
+        self.assertEqual(metadata["colormap_name"], "jet")
+        self.assertEqual(metadata["method"], "vector_quantization")
+        self.assertEqual(metadata["code_book"].shape, (256, 3))
+        self.assertEqual(metadata["distortion"].shape, recovered.shape)
+        self.assertIn("mean_distortion", metadata)
+        self.assertEqual(metadata["image_shape"], (50, 60))
+
+        mae = float(np.mean(np.abs(recovered - true_scalar)))
+        self.assertLess(mae, 0.02)
+
+    def test_extract_data_orchestrator_colorbar_primary(self):
+        """Test that extract_data uses primary colorbar pathway when a colorbar is present."""
+        test_case = TestColorbarPipeline()
+        canvas, _, _, _ = test_case._create_synthetic_colorbar_image(orientation="vertical")
+
+        scalar_array, meta = extract_data(canvas, return_metadata=True)
+        self.assertEqual(meta["method"], "colorbar")
+        self.assertIn("colorbar_bbox", meta)
+        self.assertEqual(scalar_array.shape, canvas.shape[:2])
+
+    def test_extract_data_orchestrator_fallback_to_vq(self):
+        """Test that extract_data automatically falls back to VQ when no colorbar is found."""
+        bgr_img, true_scalar = self._create_synthetic_visualization(
+            height=60, width=70, colormap_name="jet"
+        )
+
+        # Orchestrator with auto method
+        scalar_array, meta = extract_data(bgr_img, colormap_name="jet", return_metadata=True)
+        self.assertEqual(meta["method"], "vector_quantization")
+        self.assertIn("fallback_from_colorbar_error", meta)
+
+        mae = float(np.mean(np.abs(scalar_array - true_scalar)))
+        self.assertLess(mae, 0.02)
+
+    def test_extract_data_orchestrator_method_selection(self):
+        """Test explicit method selection in the orchestrator ('colorbar' vs 'vq')."""
+        bgr_no_cb, _ = self._create_synthetic_visualization(height=50, width=50)
+
+        # Requesting 'colorbar' only should raise ColorbarNotFoundError when missing
+        with self.assertRaises(ColorbarNotFoundError):
+            extract_data(bgr_no_cb, method="colorbar")
+
+        # Explicitly requesting 'vq' should succeed
+        res = extract_data(bgr_no_cb, method="vq")
+        self.assertEqual(res.shape, (50, 50))
+
+        # Invalid method should raise ValueError
+        with self.assertRaises(ValueError):
+            extract_data(bgr_no_cb, method="unknown_method_xyz")
+
+    def test_main_run_pipeline(self):
+        """Test backend/main.py run_pipeline end-to-end with output saving."""
+        bgr_img, true_scalar = self._create_synthetic_visualization(
+            height=40, width=50, colormap_name="jet"
+        )
+        img_path = os.path.join(self.temp_dir.name, "main_input.png")
+        cv2.imwrite(img_path, bgr_img)
+
+        out_npy = os.path.join(self.temp_dir.name, "recovered.npy")
+        scalar, meta = run_pipeline(
+            img_path,
+            colormap_name="jet",
+            output_path=out_npy,
+            return_metadata=True,
+        )
+
+        self.assertTrue(os.path.isfile(out_npy))
+        loaded_scalar = np.load(out_npy)
+        np.testing.assert_array_almost_equal(scalar, loaded_scalar)
+        self.assertEqual(meta["method"], "vector_quantization")
 
 
 if __name__ == "__main__":
