@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 
 from backend.pipeline import (
@@ -31,6 +34,7 @@ from backend.pipeline import (
     extract_data_vector_quantization,
     generate_colormap_codebook,
     load_image,
+    preprocess_image,
 )
 
 logger = logging.getLogger("earth_jukebox.main")
@@ -41,6 +45,7 @@ def run_pipeline(
     colormap_name: str = "jet",
     output_path: Optional[Union[str, Path]] = None,
     method: str = "auto",
+    preprocess: bool = False,
     return_metadata: bool = False,
     **kwargs: Any,
 ) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
@@ -53,8 +58,9 @@ def run_pipeline(
         colormap_name: Theoretical colormap to use for VQ fallback (default: 'jet').
         output_path: Optional file path to save the recovered scalar array (.npy or .csv).
         method: Extraction pathway: 'auto' (default), 'colorbar', or 'vq'.
+        preprocess: Whether to apply CLAHE and noise reduction preprocessing.
         return_metadata: Whether to return extraction metadata.
-        **kwargs: Additional keyword arguments forwarded to extract_data.
+        **kwargs: Additional keyword arguments forwarded to extract_data and preprocess_image.
 
     Returns:
         np.ndarray: Recovered 2D scalar array [0.0, 1.0].
@@ -64,14 +70,18 @@ def run_pipeline(
         image_path=image_path,
         colormap_name=colormap_name,
         method=method,
-        return_metadata=return_metadata,
+        return_metadata=True,
         **kwargs,
     )
+    scalar_array, metadata = result
 
-    if return_metadata:
-        scalar_array, metadata = result
-    else:
-        scalar_array = result
+    if preprocess:
+        scalar_array, prep_meta = preprocess_image(
+            scalar_array,
+            return_metadata=True,
+            **kwargs,
+        )
+        metadata["preprocessing"] = prep_meta
 
     if output_path is not None:
         out_p = Path(output_path)
@@ -84,7 +94,9 @@ def run_pipeline(
             np.save(str(out_p) + ".npy", scalar_array)
         logger.info("Saved extracted scalar array to %s", output_path)
 
-    return result
+    if return_metadata:
+        return scalar_array, metadata
+    return scalar_array
 
 
 def main() -> None:
@@ -112,6 +124,11 @@ def main() -> None:
         default=None,
         help="Optional output path for extracted scalar array (.npy)",
     )
+    parser.add_argument(
+        "--preprocess",
+        action="store_true",
+        help="Apply CLAHE contrast adjustment and noise reduction preprocessing",
+    )
     args = parser.parse_args()
 
     try:
@@ -120,6 +137,7 @@ def main() -> None:
             colormap_name=args.colormap,
             output_path=args.output,
             method=args.method,
+            preprocess=args.preprocess,
             return_metadata=True,
         )
         print(

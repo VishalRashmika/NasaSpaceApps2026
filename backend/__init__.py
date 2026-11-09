@@ -13,6 +13,7 @@ from backend.pipeline import (
     extract_data_vector_quantization,
     generate_colormap_codebook,
     load_image,
+    preprocess_image,
 )
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "extract_data_vector_quantization",
     "generate_colormap_codebook",
     "load_image",
+    "preprocess_image",
     "detect_colorbar_bounding_box",
     "build_colorbar_lut",
     "apply_lut_to_image",

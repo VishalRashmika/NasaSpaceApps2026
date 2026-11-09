@@ -696,3 +696,247 @@ def extract_data(
             return scalar_array, metadata
         return scalar_array
 
+
+# =============================================================================
+# Image Preprocessing and Enhancement: CLAHE & Noise Reduction
+# =============================================================================
+
+
+def preprocess_image(
+    scalar_array: Union[str, Path, np.ndarray],
+    apply_clahe: bool = True,
+    apply_median_blur: bool = False,
+    apply_gaussian_blur: bool = False,
+    clahe_clip_limit: float = 2.0,
+    clahe_tile_grid_size: Tuple[int, int] = (8, 8),
+    median_ksize: int = 3,
+    gaussian_ksize: Union[int, Tuple[int, int]] = (5, 5),
+    gaussian_sigma: float = 0.0,
+    blur_order: str = "before",
+    return_metadata: bool = False,
+    **kwargs: Any,
+) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
+    """
+    Preprocess and enhance scientific visualization scalar data prior to morphological analysis.
+
+    Applies Contrast Limited Adaptive Histogram Equalization (CLAHE) to the L (luminance)
+    channel in the LAB color space to preserve data integrity while boosting local contrast.
+    Provides configurable toggles for noise reduction:
+    - cv2.medianBlur: Removes salt-and-pepper / impulse noise while strictly preserving sharp edges.
+    - cv2.GaussianBlur: Smooths fine-grained textures and high-frequency noise.
+
+    Args:
+        scalar_array: Input 2D scalar array [0.0, 1.0], 3D BGR image array, or image file path.
+        apply_clahe: Whether to apply CLAHE to L (luminance) in LAB color space (default: True).
+        apply_median_blur: Toggle for median blur salt-and-pepper noise reduction (default: False).
+        apply_gaussian_blur: Toggle for Gaussian blur fine texture smoothing (default: False).
+        clahe_clip_limit: Contrast clipping threshold for CLAHE (default: 2.0).
+        clahe_tile_grid_size: Tile grid dimensions for adaptive equalization (default: (8, 8)).
+        median_ksize: Kernel aperture size for cv2.medianBlur; must be odd >= 3 (default: 3).
+        gaussian_ksize: Gaussian kernel size; positive odd int or (w, h) tuple (default: (5, 5)).
+        gaussian_sigma: Gaussian kernel sigma in X direction; 0 means auto (default: 0.0).
+        blur_order: Noise reduction execution order relative to CLAHE: 'before' or 'after' (default: 'before').
+        return_metadata: Whether to return a metadata dictionary alongside the array (default: False).
+        **kwargs: Parameter aliases (clahe, enable_clahe, median_blur, enable_median_blur,
+                 gaussian_blur, enable_gaussian_blur, clip_limit, tile_grid_size, grid_size,
+                 median_kernel_size, gaussian_kernel_size, sigma, sigma_x).
+
+    Returns:
+        np.ndarray: Normalized 0.0 to 1.0 float32 NumPy array.
+        (Optional) Dict[str, Any]: Preprocessing metadata if return_metadata=True.
+
+    Raises:
+        TypeError: If input is not an ndarray or valid file path.
+        ValueError: If array is empty, dimensions invalid, or parameters out of range.
+        FileNotFoundError: If image file path does not exist.
+    """
+    # Parameter aliases
+    if "clahe" in kwargs:
+        apply_clahe = bool(kwargs.pop("clahe"))
+    if "enable_clahe" in kwargs:
+        apply_clahe = bool(kwargs.pop("enable_clahe"))
+    if "median_blur" in kwargs:
+        apply_median_blur = bool(kwargs.pop("median_blur"))
+    if "enable_median_blur" in kwargs:
+        apply_median_blur = bool(kwargs.pop("enable_median_blur"))
+    if "gaussian_blur" in kwargs:
+        apply_gaussian_blur = bool(kwargs.pop("gaussian_blur"))
+    if "enable_gaussian_blur" in kwargs:
+        apply_gaussian_blur = bool(kwargs.pop("enable_gaussian_blur"))
+    if "clip_limit" in kwargs:
+        clahe_clip_limit = float(kwargs.pop("clip_limit"))
+    if "tile_grid_size" in kwargs:
+        clahe_tile_grid_size = kwargs.pop("tile_grid_size")
+    if "grid_size" in kwargs:
+        clahe_tile_grid_size = kwargs.pop("grid_size")
+    if "median_kernel_size" in kwargs:
+        median_ksize = int(kwargs.pop("median_kernel_size"))
+    if "gaussian_kernel_size" in kwargs:
+        gaussian_ksize = kwargs.pop("gaussian_kernel_size")
+    if "sigma" in kwargs:
+        gaussian_sigma = float(kwargs.pop("sigma"))
+    if "sigma_x" in kwargs:
+        gaussian_sigma = float(kwargs.pop("sigma_x"))
+
+    # Load from path if string or Path
+    if isinstance(scalar_array, (str, Path)):
+        img = load_image(scalar_array)
+    elif isinstance(scalar_array, np.ndarray):
+        img = scalar_array.copy()
+    else:
+        raise TypeError(
+            f"Expected np.ndarray or image path, received {type(scalar_array).__name__}"
+        )
+
+    if img.size == 0:
+        raise ValueError("Input scalar_array cannot be empty.")
+
+    # Clean non-finite values for float arrays
+    if np.issubdtype(img.dtype, np.floating):
+        img = np.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
+
+    # Validate array dimensions
+    if img.ndim == 1:
+        raise ValueError(f"Input must be 2D or 3D array, got 1D array of shape {img.shape}.")
+    elif img.ndim == 3:
+        if img.shape[2] == 1:
+            img = img.squeeze(axis=2)
+        elif img.shape[2] == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        elif img.shape[2] != 3:
+            raise ValueError(f"Unsupported number of channels: {img.shape[2]}")
+    elif img.ndim > 3:
+        raise ValueError(f"Expected 2D or 3D array, got {img.ndim}D array of shape {img.shape}.")
+
+    # Parameter validation
+    if apply_median_blur:
+        if not isinstance(median_ksize, int) or median_ksize % 2 == 0 or median_ksize < 3:
+            raise ValueError(
+                f"median_ksize must be an odd integer >= 3, got {median_ksize}."
+            )
+
+    if apply_gaussian_blur:
+        if isinstance(gaussian_ksize, int):
+            gk = (gaussian_ksize, gaussian_ksize)
+        elif isinstance(gaussian_ksize, (tuple, list)) and len(gaussian_ksize) == 2:
+            gk = (int(gaussian_ksize[0]), int(gaussian_ksize[1]))
+        else:
+            raise ValueError(
+                f"gaussian_ksize must be an integer or 2-tuple of positive odd integers, got {gaussian_ksize}."
+            )
+        if gk[0] % 2 == 0 or gk[1] % 2 == 0 or gk[0] < 1 or gk[1] < 1:
+            raise ValueError(
+                f"gaussian_ksize elements must be positive odd integers, got {gk}."
+            )
+        gaussian_ksize = gk
+
+    if apply_clahe:
+        if isinstance(clahe_tile_grid_size, (tuple, list)) and len(clahe_tile_grid_size) == 2:
+            clahe_tile_grid_size = (int(clahe_tile_grid_size[0]), int(clahe_tile_grid_size[1]))
+        else:
+            raise ValueError(
+                f"clahe_tile_grid_size must be a 2-tuple of positive integers, got {clahe_tile_grid_size}."
+            )
+        if clahe_tile_grid_size[0] < 1 or clahe_tile_grid_size[1] < 1:
+            raise ValueError(
+                f"clahe_tile_grid_size elements must be positive integers, got {clahe_tile_grid_size}."
+            )
+        if clahe_clip_limit <= 0:
+            raise ValueError(f"clahe_clip_limit must be > 0, got {clahe_clip_limit}.")
+
+    blur_order_lower = blur_order.lower()
+    if blur_order_lower not in ("before", "after"):
+        raise ValueError(f"blur_order must be 'before' or 'after', got '{blur_order}'.")
+
+    # Step 1: Normalize input to standard representation
+    if img.ndim == 3:
+        # 3-channel BGR image
+        if np.issubdtype(img.dtype, np.floating):
+            if img.min() >= -1e-4 and img.max() <= 1.0 + 1e-4:
+                bgr_u8 = np.clip(np.round(img * 255.0), 0, 255).astype(np.uint8)
+            else:
+                min_v, max_v = float(img.min()), float(img.max())
+                if max_v > min_v:
+                    bgr_u8 = np.clip(np.round(((img - min_v) / (max_v - min_v)) * 255.0), 0, 255).astype(np.uint8)
+                else:
+                    bgr_u8 = np.zeros(img.shape[:2] + (3,), dtype=np.uint8)
+        else:
+            bgr_u8 = np.clip(img, 0, 255).astype(np.uint8)
+    else:
+        # 2D scalar array
+        if np.issubdtype(img.dtype, np.floating):
+            if img.min() >= -1e-4 and img.max() <= 1.0 + 1e-4:
+                norm_2d = np.clip(img.astype(np.float32), 0.0, 1.0)
+            else:
+                min_v, max_v = float(img.min()), float(img.max())
+                if max_v > min_v:
+                    norm_2d = ((img - min_v) / (max_v - min_v)).astype(np.float32)
+                else:
+                    norm_2d = np.zeros_like(img, dtype=np.float32)
+        else:
+            norm_2d = (np.clip(img, 0, 255).astype(np.float32)) / 255.0
+
+        gray_u8 = np.clip(np.round(norm_2d * 255.0), 0, 255).astype(np.uint8)
+        bgr_u8 = cv2.cvtColor(gray_u8, cv2.COLOR_GRAY2BGR)
+
+    def _execute_noise_reduction(bgr: np.ndarray) -> np.ndarray:
+        out = bgr
+        if apply_median_blur:
+            out = cv2.medianBlur(out, median_ksize)
+        if apply_gaussian_blur:
+            out = cv2.GaussianBlur(out, gaussian_ksize, float(gaussian_sigma))
+        return out
+
+    # Noise reduction before CLAHE (standard denoising practice)
+    if blur_order_lower == "before":
+        bgr_u8 = _execute_noise_reduction(bgr_u8)
+
+    # Step 2: Apply CLAHE to L (luminance) channel in LAB color space
+    if apply_clahe:
+        # Convert BGR to LAB color space
+        lab = cv2.cvtColor(bgr_u8, cv2.COLOR_BGR2LAB)
+        l_chan, a_chan, b_chan = cv2.split(lab)
+
+        # Apply CLAHE strictly to L channel to enhance contrast without altering chroma
+        clahe = cv2.createCLAHE(
+            clipLimit=float(clahe_clip_limit),
+            tileGridSize=clahe_tile_grid_size,
+        )
+        l_enhanced = clahe.apply(l_chan)
+
+        # Merge enhanced L channel back with original A and B channels
+        lab_enhanced = cv2.merge([l_enhanced, a_chan, b_chan])
+        bgr_u8 = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
+
+    # Noise reduction after CLAHE if requested
+    if blur_order_lower == "after":
+        bgr_u8 = _execute_noise_reduction(bgr_u8)
+
+    # Step 3: Convert to normalized 0.0 to 1.0 float32 scalar NumPy array
+    gray_out = cv2.cvtColor(bgr_u8, cv2.COLOR_BGR2GRAY)
+    output_scalar = (gray_out.astype(np.float32) / 255.0).astype(np.float32)
+    output_scalar = np.clip(output_scalar, 0.0, 1.0)
+
+    if return_metadata:
+        metadata = {
+            "apply_clahe": apply_clahe,
+            "clahe_clip_limit": clahe_clip_limit if apply_clahe else None,
+            "clahe_tile_grid_size": clahe_tile_grid_size if apply_clahe else None,
+            "apply_median_blur": apply_median_blur,
+            "median_ksize": median_ksize if apply_median_blur else None,
+            "apply_gaussian_blur": apply_gaussian_blur,
+            "gaussian_ksize": gaussian_ksize if apply_gaussian_blur else None,
+            "gaussian_sigma": gaussian_sigma if apply_gaussian_blur else None,
+            "blur_order": blur_order_lower,
+            "input_shape": img.shape,
+            "output_shape": output_scalar.shape,
+            "min_value": float(output_scalar.min()),
+            "max_value": float(output_scalar.max()),
+            "mean_value": float(np.mean(output_scalar)),
+            "std_value": float(np.std(output_scalar)),
+        }
+        return output_scalar, metadata
+
+    return output_scalar
+
+

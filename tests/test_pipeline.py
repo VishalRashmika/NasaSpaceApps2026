@@ -18,6 +18,7 @@ from backend.pipeline import (
     apply_lut_to_image,
     ColorbarNotFoundError,
     load_image,
+    preprocess_image,
 )
 from backend.main import run_pipeline
 
@@ -383,6 +384,266 @@ class TestVectorQuantizationPipeline(unittest.TestCase):
         loaded_scalar = np.load(out_npy)
         np.testing.assert_array_almost_equal(scalar, loaded_scalar)
         self.assertEqual(meta["method"], "vector_quantization")
+
+
+class TestPreprocessImage(unittest.TestCase):
+    """
+    Unit tests for preprocess_image (CLAHE in LAB color space & noise reduction toggles).
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_output_format_and_range(self):
+        """Verify output is a normalized 0.0 to 1.0 float32 NumPy array with matching 2D shape."""
+        # Test linear ramp
+        y, x = np.mgrid[0:80, 0:100]
+        scalar = (x / 100.0).astype(np.float32)
+
+        out = preprocess_image(scalar)
+
+        self.assertIsInstance(out, np.ndarray)
+        self.assertEqual(out.dtype, np.float32)
+        self.assertEqual(out.shape, (80, 100))
+        self.assertGreaterEqual(float(out.min()), 0.0)
+        self.assertLessEqual(float(out.max()), 1.0)
+
+    def test_clahe_boosts_local_contrast(self):
+        """Verify CLAHE on L channel in LAB color space boosts contrast on low-contrast regions."""
+        # Low contrast region: subtle variations around 0.5
+        np.random.seed(42)
+        low_contrast = (0.5 + 0.03 * np.sin(np.linspace(0, 10, 100))[:, None] * np.cos(np.linspace(0, 10, 100))[None, :]).astype(np.float32)
+        orig_std = float(np.std(low_contrast))
+
+        enhanced = preprocess_image(
+            low_contrast,
+            apply_clahe=True,
+            apply_median_blur=False,
+            apply_gaussian_blur=False,
+            clahe_clip_limit=3.0,
+        )
+
+        enhanced_std = float(np.std(enhanced))
+        self.assertGreater(enhanced_std, orig_std * 2.0, "CLAHE failed to significantly boost contrast.")
+        self.assertGreaterEqual(float(enhanced.min()), 0.0)
+        self.assertLessEqual(float(enhanced.max()), 1.0)
+
+    def test_clahe_parameters(self):
+        """Verify clahe_clip_limit and clahe_tile_grid_size affect the contrast enhancement."""
+        np.random.seed(42)
+        low_contrast = np.random.uniform(0.45, 0.55, (64, 64)).astype(np.float32)
+
+        out_low_clip = preprocess_image(low_contrast, clahe_clip_limit=1.0)
+        out_high_clip = preprocess_image(low_contrast, clahe_clip_limit=5.0)
+
+        std_low = float(np.std(out_low_clip))
+        std_high = float(np.std(out_high_clip))
+        self.assertGreaterEqual(std_high, std_low)
+
+    def test_clahe_disabled(self):
+        """Verify apply_clahe=False leaves contrast unmodified."""
+        ramp = np.linspace(0.0, 1.0, 50, dtype=np.float32).reshape(5, 10)
+        out = preprocess_image(ramp, apply_clahe=False, apply_median_blur=False, apply_gaussian_blur=False)
+        np.testing.assert_array_almost_equal(out, ramp, decimal=2)
+
+    def test_median_blur_salt_and_pepper_noise(self):
+        """Verify cv2.medianBlur removes salt-and-pepper impulses while preserving sharp edges."""
+        # Create a step edge: left half 0.2, right half 0.8
+        img = np.zeros((50, 50), dtype=np.float32)
+        img[:, :25] = 0.2
+        img[:, 25:] = 0.8
+
+        # Inject salt and pepper noise
+        noisy = img.copy()
+        noisy[10, 10] = 1.0  # Salt
+        noisy[10, 40] = 0.0  # Pepper
+        noisy[25, 15] = 1.0  # Salt
+        noisy[35, 35] = 0.0  # Pepper
+
+        # Preprocess with median blur enabled (no CLAHE to isolate blur)
+        denoised = preprocess_image(
+            noisy,
+            apply_clahe=False,
+            apply_median_blur=True,
+            median_ksize=3,
+        )
+
+        # Check noise at spike locations was eliminated
+        self.assertAlmostEqual(denoised[10, 10], 0.2, delta=0.05)
+        self.assertAlmostEqual(denoised[10, 40], 0.8, delta=0.05)
+        self.assertAlmostEqual(denoised[25, 15], 0.2, delta=0.05)
+        self.assertAlmostEqual(denoised[35, 35], 0.8, delta=0.05)
+
+        # Check that the sharp boundary between col 24 and col 25 is preserved
+        self.assertAlmostEqual(denoised[25, 23], 0.2, delta=0.05)
+        self.assertAlmostEqual(denoised[25, 26], 0.8, delta=0.05)
+
+    def test_gaussian_blur_texture_smoothing(self):
+        """Verify cv2.GaussianBlur smooths fine-grained textures and high-frequency noise."""
+        np.random.seed(123)
+        clean = np.ones((60, 60), dtype=np.float32) * 0.5
+        noise = np.random.normal(0, 0.08, (60, 60)).astype(np.float32)
+        noisy = np.clip(clean + noise, 0.0, 1.0)
+        noisy_std = float(np.std(noisy - clean))
+
+        smoothed = preprocess_image(
+            noisy,
+            apply_clahe=False,
+            apply_gaussian_blur=True,
+            gaussian_ksize=(5, 5),
+            gaussian_sigma=1.5,
+        )
+        smoothed_std = float(np.std(smoothed - clean))
+
+        self.assertLess(smoothed_std, noisy_std * 0.5, "GaussianBlur failed to smooth fine-grained texture.")
+
+    def test_combined_pipeline(self):
+        """Verify combined pipeline with CLAHE, medianBlur, and GaussianBlur."""
+        np.random.seed(42)
+        y, x = np.mgrid[0:50, 0:50]
+        base = (x / 50.0).astype(np.float32)
+
+        # Add salt-and-pepper noise and fine texture
+        noisy = base.copy()
+        noisy[5, 5] = 1.0
+        noisy[40, 40] = 0.0
+        noisy += np.random.normal(0, 0.02, (50, 50)).astype(np.float32)
+        noisy = np.clip(noisy, 0.0, 1.0)
+
+        out = preprocess_image(
+            noisy,
+            apply_clahe=True,
+            apply_median_blur=True,
+            apply_gaussian_blur=True,
+            median_ksize=3,
+            gaussian_ksize=(3, 3),
+        )
+
+        self.assertIsInstance(out, np.ndarray)
+        self.assertEqual(out.dtype, np.float32)
+        self.assertEqual(out.shape, (50, 50))
+        self.assertGreaterEqual(float(out.min()), 0.0)
+        self.assertLessEqual(float(out.max()), 1.0)
+        # Salt noise spike eliminated
+        self.assertLess(float(out[5, 5]), 0.6)
+
+    def test_parameter_aliases(self):
+        """Verify parameter aliases (clahe, median_blur, gaussian_blur, etc.) work properly."""
+        arr = np.linspace(0.0, 1.0, 900, dtype=np.float32).reshape(30, 30)
+
+        out = preprocess_image(
+            arr,
+            clahe=True,
+            median_blur=True,
+            gaussian_blur=True,
+            clip_limit=3.0,
+            grid_size=(4, 4),
+            median_kernel_size=3,
+            gaussian_kernel_size=3,
+            sigma=1.0,
+        )
+        self.assertEqual(out.shape, (30, 30))
+        self.assertEqual(out.dtype, np.float32)
+
+    def test_return_metadata(self):
+        """Verify return_metadata=True returns a structured dictionary."""
+        arr = np.random.uniform(0.2, 0.8, (40, 40)).astype(np.float32)
+        res, meta = preprocess_image(
+            arr,
+            apply_clahe=True,
+            apply_median_blur=True,
+            apply_gaussian_blur=True,
+            return_metadata=True,
+        )
+
+        self.assertIsInstance(meta, dict)
+        self.assertTrue(meta["apply_clahe"])
+        self.assertTrue(meta["apply_median_blur"])
+        self.assertTrue(meta["apply_gaussian_blur"])
+        self.assertEqual(meta["input_shape"], (40, 40))
+        self.assertEqual(meta["output_shape"], (40, 40))
+        self.assertIn("min_value", meta)
+        self.assertIn("max_value", meta)
+        self.assertIn("mean_value", meta)
+        self.assertIn("std_value", meta)
+
+    def test_uint8_and_3d_inputs(self):
+        """Verify handling of uint8 arrays and 3D BGR arrays."""
+        # 2D uint8
+        u8_img = np.random.randint(0, 256, (30, 30), dtype=np.uint8)
+        out_u8 = preprocess_image(u8_img)
+        self.assertEqual(out_u8.dtype, np.float32)
+        self.assertEqual(out_u8.shape, (30, 30))
+        self.assertGreaterEqual(float(out_u8.min()), 0.0)
+        self.assertLessEqual(float(out_u8.max()), 1.0)
+
+        # 3D BGR uint8
+        bgr_img = np.random.randint(0, 256, (30, 30, 3), dtype=np.uint8)
+        out_bgr = preprocess_image(bgr_img)
+        self.assertEqual(out_bgr.dtype, np.float32)
+        self.assertEqual(out_bgr.shape, (30, 30))
+
+        # File path
+        test_path = os.path.join(self.temp_dir.name, "test_pre.png")
+        cv2.imwrite(test_path, bgr_img)
+        out_file = preprocess_image(test_path)
+        self.assertEqual(out_file.dtype, np.float32)
+        self.assertEqual(out_file.shape, (30, 30))
+
+    def test_invalid_parameters_raise_errors(self):
+        """Verify appropriate errors are raised for invalid inputs or parameters."""
+        arr = np.zeros((20, 20), dtype=np.float32)
+
+        # Invalid input type
+        with self.assertRaises(TypeError):
+            preprocess_image(12345)
+
+        # Empty array
+        with self.assertRaises(ValueError):
+            preprocess_image(np.array([]))
+
+        # 1D array
+        with self.assertRaises(ValueError):
+            preprocess_image(np.zeros(20))
+
+        # Even median_ksize
+        with self.assertRaises(ValueError):
+            preprocess_image(arr, apply_median_blur=True, median_ksize=4)
+
+        # Invalid gaussian_ksize
+        with self.assertRaises(ValueError):
+            preprocess_image(arr, apply_gaussian_blur=True, gaussian_ksize=(4, 4))
+
+        # Invalid clahe_clip_limit
+        with self.assertRaises(ValueError):
+            preprocess_image(arr, apply_clahe=True, clahe_clip_limit=0.0)
+
+        # Non-existent file path
+        with self.assertRaises(FileNotFoundError):
+            preprocess_image("non_existent_image_path_12345.png")
+
+    def test_run_pipeline_integration_with_preprocess(self):
+        """Verify backend/main.py run_pipeline works with preprocess=True."""
+        canvas = np.zeros((100, 100, 3), dtype=np.uint8)
+        canvas[20:80, 20:80] = 128
+        test_path = os.path.join(self.temp_dir.name, "pipeline_prep.png")
+        cv2.imwrite(test_path, canvas)
+
+        scalar, meta = run_pipeline(
+            test_path,
+            method="vq",
+            colormap_name="jet",
+            preprocess=True,
+            return_metadata=True,
+        )
+        self.assertIsInstance(scalar, np.ndarray)
+        self.assertEqual(scalar.dtype, np.float32)
+        self.assertEqual(scalar.shape, (100, 100))
+        self.assertIn("preprocessing", meta)
+        self.assertTrue(meta["preprocessing"]["apply_clahe"])
 
 
 if __name__ == "__main__":
