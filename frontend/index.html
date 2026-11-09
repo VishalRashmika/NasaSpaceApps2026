@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Earth Jukebox | NASA EIC Sonification Renderer</title>
+  
+  <!-- Favicon placeholder / SVG icon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+  
+  <!-- NASA / Space Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Core Sonification & Visualization CDNs -->
+  <!-- 1. p5.js: Canvas rendering for NASA EIC imagery and geometric scanheads -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  
+  <!-- 2. Tone.js: Web Audio framework for multi-layer synthesis, spatial audio & transport clock -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Header / Brand Navigation Bar -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-orb">
+          <span class="orb-icon">🪐</span>
+        </div>
+        <div class="brand-text">
+          <h1>THE EARTH JUKEBOX</h1>
+          <p class="tagline">NASA Earth Information Center & Chandra X-ray Sonification</p>
+        </div>
+      </div>
+      
+      <div class="header-status">
+        <div class="badge status-badge" id="audio-status-badge">
+          <span class="status-dot suspended" id="audio-status-dot"></span>
+          <span id="audio-status-text">Audio: Suspended (Click Play)</span>
+        </div>
+        <div class="badge scan-badge" id="scan-mode-badge">
+          <span id="scan-mode-text">Horizontal Sweep</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Application Stage -->
+    <main class="app-main">
+      <!-- Left Column: Visual Canvas Stage -->
+      <section class="canvas-section">
+        <div class="card canvas-card">
+          <div class="card-header canvas-header">
+            <div class="canvas-title-group">
+              <span class="canvas-icon">🛰️</span>
+              <div>
+                <h2>EIC Sonification Display</h2>
+                <span class="canvas-subtitle" id="canvas-status-desc">NASA Legacy RGB Data Frame & Real-Time Geometric Scanhead</span>
+              </div>
+            </div>
+
+            <div class="canvas-hud">
+              <span class="hud-item" id="hud-coordinates">X: -- | Y: --</span>
+              <span class="hud-item" id="hud-active-voices">Voices: 0</span>
+            </div>
+          </div>
+
+          <!-- p5.js Canvas Container (Requirement 2) -->
+          <div id="canvas-container" class="canvas-container" tabindex="0" aria-label="EIC Sonification Canvas">
+            <!-- p5 canvas will attach here -->
+            <div id="canvas-placeholder" class="canvas-placeholder">
+              <div class="loader-spinner"></div>
+              <p>Initializing p5.js Canvas...</p>
+            </div>
+          </div>
+
+          <!-- Timeline Scrubber & Progress Bar -->
+          <div class="timeline-bar-wrapper">
+            <div class="timeline-scrubber" id="timeline-scrubber" title="Click to seek">
+              <div class="timeline-fill" id="timeline-fill"></div>
+              <div class="timeline-playhead" id="timeline-playhead"></div>
+            </div>
+            <div class="timeline-readouts">
+              <span class="time-display" id="time-display">00:00.00 / 00:05.00</span>
+              <span class="time-percentage" id="time-percentage">0.0%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Control & Metadata Dock (Requirement 3) -->
+      <aside class="ui-panel control-panel">
+        <!-- 1. Master Transport Controls -->
+        <div class="card panel-card transport-card">
+          <h3 class="panel-section-title">
+            <span class="section-icon">🎛️</span> Transport Controls
+          </h3>
+
+          <div class="transport-buttons-grid">
+            <!-- Load JSON Button & Hidden File Input -->
+            <input type="file" id="json-file-input" accept=".json,application/json" class="file-input-hidden">
+            <button id="btn-load-json" class="btn btn-primary" title="Load a sonification JSON blueprint">
+              <span class="btn-icon">📂</span>
+              <span class="btn-label">Load JSON</span>
+            </button>
+
+            <!-- Quick Demo Button -->
+            <button id="btn-load-demo" class="btn btn-secondary" title="Load sample NASA EIC blueprint">
+              <span class="btn-icon">✨</span>
+              <span class="btn-label">Load Demo</span>
+            </button>
+
+            <!-- Play Button -->
+            <button id="btn-play" class="btn btn-play" title="Start playback and resume AudioContext">
+              <span class="btn-icon">▶</span>
+              <span class="btn-label">Play</span>
+            </button>
+
+            <!-- Pause Button -->
+            <button id="btn-pause" class="btn btn-pause" title="Pause playback">
+              <span class="btn-icon">⏸</span>
+              <span class="btn-label">Pause</span>
+            </button>
+
+            <!-- Stop Button -->
+            <button id="btn-stop" class="btn btn-stop" title="Stop and rewind to beginning">
+              <span class="btn-icon">⏹</span>
+              <span class="btn-label">Stop</span>
+            </button>
+          </div>
+
+          <!-- Transport State Banner -->
+          <div class="transport-status-banner">
+            <span class="label">Status:</span>
+            <span class="value" id="transport-status-value">Ready</span>
+          </div>
+        </div>
+
+        <!-- 2. Blueprint & Metadata Inspector -->
+        <div class="card panel-card metadata-card">
+          <h3 class="panel-section-title">
+            <span class="section-icon">📜</span> Blueprint Metadata
+          </h3>
+          
+          <div class="metadata-grid">
+            <div class="meta-item">
+              <span class="meta-label">Geometry:</span>
+              <span class="meta-val highlight" id="meta-geometry">horizontal_sweep</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Scale:</span>
+              <span class="meta-val" id="meta-scale">c_major_pentatonic</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Tuning:</span>
+              <span class="meta-val" id="meta-tuning">12-EDO</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Duration:</span>
+              <span class="meta-val" id="meta-duration">5.00s</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Scheduled Events:</span>
+              <span class="meta-val" id="meta-events">108</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Diffuse / Point:</span>
+              <span class="meta-val" id="meta-layer-split">105 / 3</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Audio & Synthesis Routing Controls -->
+        <div class="card panel-card audio-card">
+          <h3 class="panel-section-title">
+            <span class="section-icon">🔊</span> Synthesizer & Output
+          </h3>
+
+          <div class="control-row">
+            <label for="volume-slider" class="control-label">
+              <span>Master Volume</span>
+              <span id="volume-readout">0 dB</span>
+            </label>
+            <div class="slider-with-btn">
+              <input type="range" id="volume-slider" min="-30" max="6" step="1" value="0" class="styled-slider">
+              <button id="btn-mute" class="btn btn-small" title="Toggle Mute">🔇</button>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <label for="reverb-slider" class="control-label">
+              <span>Space Reverb (Wet)</span>
+              <span id="reverb-readout">25%</span>
+            </label>
+            <input type="range" id="reverb-slider" min="0" max="100" step="5" value="25" class="styled-slider">
+          </div>
+
+          <div class="synth-voice-indicators">
+            <div class="voice-pill diffuse" id="diffuse-indicator">
+              <span class="indicator-led"></span> Diffuse Ambient Pad
+            </div>
+            <div class="voice-pill point" id="point-indicator">
+              <span class="indicator-led"></span> Point Source Pluck
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Display & Visual Overlay Options -->
+        <div class="card panel-card visual-card">
+          <h3 class="panel-section-title">
+            <span class="section-icon">👁️</span> Visualization Options
+          </h3>
+
+          <div class="toggle-group">
+            <label class="toggle-control">
+              <input type="checkbox" id="chk-show-scanhead" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Geometric Scan Head Line</span>
+            </label>
+
+            <label class="toggle-control">
+              <input type="checkbox" id="chk-show-pulses" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Active Event Acoustic Ripples</span>
+            </label>
+
+            <label class="toggle-control">
+              <input type="checkbox" id="chk-show-grid" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Cartesian / Polar Grid Overlay</span>
+            </label>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Footer with telemetry & references -->
+    <footer class="app-footer">
+      <p>
+        <strong>The Earth Jukebox</strong> &mdash; Reverse-engineering quantitative data from legacy NASA RGB imagery.
+        Inspired by the Chandra X-ray Center sonification methodology (Arcand, Russo, Santaguida et al.).
+      </p>
+    </footer>
+  </div>
+
+  <!-- Sonification Client Application Script (Requirement 4) -->
+  <script src="script.js"></script>
+</body>
+</html>
