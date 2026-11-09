@@ -17,6 +17,9 @@
   
   <!-- 2. Tone.js: Web Audio framework for multi-layer synthesis, spatial audio & transport clock -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+  <!-- 3. TuneJS: Microtonal scale & non-Western temperament engine (Indian ragas, Javanese gamelan) -->
+  <script src="https://cdn.jsdelivr.net/gh/abbernie/tune/tune.js"></script>
 </head>
 <body>
   <div class="app-wrapper">
@@ -152,6 +155,20 @@
             <div class="meta-item">
               <span class="meta-label">Tuning:</span>
               <span class="meta-val" id="meta-tuning">12-EDO</span>
+            </div>
+            <div class="meta-item meta-tuning-select-group">
+              <span class="meta-label">Modal Palette:</span>
+              <select id="select-tuning-palette" class="select-control select-small" title="Select microtonal scale or tuning system">
+                <option value="auto">Auto (From Blueprint)</option>
+                <option value="slendro">Javanese Gamelan (Slendro 5-tone)</option>
+                <option value="pelog">Javanese Gamelan (Pelog 7-tone)</option>
+                <option value="degung">Sundanese Gamelan (Degung)</option>
+                <option value="malkauns">Indian Raga (Malkauns)</option>
+                <option value="bhairav">Indian Carnatic (Bhairav Sruti)</option>
+                <option value="ji_12">Just Intonation (12-JI)</option>
+                <option value="pyth_12">Pythagorean (12-Pyth)</option>
+                <option value="12-EDO">Standard 12-Tone Equal (12-EDO)</option>
+              </select>
             </div>
             <div class="meta-item">
               <span class="meta-label">Duration:</span>

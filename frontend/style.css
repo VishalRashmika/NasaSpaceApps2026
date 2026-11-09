@@ -567,6 +567,33 @@ body {
   font-weight: 600;
 }
 
+.meta-tuning-select-group {
+  grid-column: span 2;
+}
+
+.select-control {
+  background: rgba(10, 15, 29, 0.85);
+  color: var(--accent-sky);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.5rem;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.select-control:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.3);
+}
+
+.select-control option {
+  background: #0b1329;
+  color: #e2e8f0;
+}
+
 /* Audio Controls */
 .control-row {
   display: flex;

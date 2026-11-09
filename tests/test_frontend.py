@@ -605,5 +605,259 @@ process.exit(0);
 
 
 
+    def test_index_html_tunejs_cdn(self):
+        """Task 16: index.html must include TuneJS CDN link for microtonal non-Western tuning."""
+        content = self.index_html_path.read_text(encoding="utf-8")
+        self.assertTrue(
+            re.search(r'<script[^>]*src=["\'][^"\']*tune(\.min)?\.js[^"\']*["\']', content),
+            "TuneJS CDN script tag missing in index.html",
+        )
+
+    def test_tunejs_static_definitions(self):
+        """Task 16: script.js must implement TuneJS integration (scaleName, tuningSystem, initTune, microtonal oscillator setting)."""
+        js = self.script_js_path.read_text(encoding="utf-8")
+
+        # 1. Read scaleName & tuningSystem from metadata
+        self.assertIn("scaleName", js)
+        self.assertIn("tuningSystem", js)
+        self.assertIn("initTune", js)
+
+        # 2. Initialize TuneJS with selected scale
+        self.assertIn("loadScale", js)
+        self.assertIn("resolveTuneScale", js)
+        self.assertIn("slendro", js)
+        self.assertIn("pelog", js)
+        self.assertIn("malkauns", js)
+
+        # 3. Pass target MIDI note through TuneJS and set oscillator frequency
+        self.assertIn("getTunedFrequency", js)
+        self.assertIn("setOscillatorFrequency", js)
+        self.assertIn("triggerOscillator", js)
+        self.assertIn("patchTuneFrequencyForMidi", js)
+
+    def test_node_tunejs_scale_resolution(self):
+        """Task 16: Verify resolveTuneScale correctly maps non-Western modal palettes (Indian ragas, Javanese gamelan)."""
+        node_script = """
+const fs = require('fs');
+const vm = require('vm');
+
+const sandbox = {
+  window: {},
+  document: {
+    getElementById: () => ({ addEventListener: () => {}, classList: { add: () => {}, remove: () => {} }, style: {}, textContent: '' }),
+    querySelectorAll: () => []
+  },
+  console: console,
+  Tone: { Volume: function() {}, PolySynth: function() {}, PluckSynth: function() {}, Transport: { cancel: () => {} } },
+  p5: function() {}
+};
+sandbox.window.addEventListener = () => {};
+
+const script = fs.readFileSync('frontend/script.js', 'utf8');
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+
+const resolve = sandbox.window.resolveTuneScale;
+if (!resolve) process.exit(1);
+
+// Test Gamelan Slendro & Pelog
+if (resolve('slendro', '12-EDO') !== 'slendro') process.exit(2);
+if (resolve('pelog', 'javanese_gamelan') !== 'pelog1') process.exit(3);
+if (resolve('degung', 'gamelan') !== 'degung1') process.exit(4);
+
+// Test Indian Ragas
+if (resolve('malkauns', 'raga') !== 'malkauns') process.exit(5);
+if (resolve('raga_bhairav', 'indian') !== 'indian-ayyar') process.exit(6);
+if (resolve('raga', 'indian_raga') !== 'malkauns') process.exit(7);
+
+// Test Historic Just Intonation
+if (resolve('just_intonation', 'just_intonation') !== 'ji_12') process.exit(8);
+if (resolve('pythagorean', 'pythagorean') !== 'pyth_12') process.exit(9);
+
+process.exit(0);
+"""
+        res = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, f"Node resolveTuneScale test error: {res.stderr}\\n{res.stdout}")
+
+    def test_node_tunejs_integration_with_mock(self):
+        """Task 16: Verify end-to-end TuneJS integration: scale loading, MIDI translation, and oscillator frequency setting."""
+        node_script = """
+const fs = require('fs');
+const vm = require('vm');
+
+let loadedScaleName = null;
+let notesPassedToTune = [];
+let oscillatorFrequencySet = null;
+let synthTriggeredFreq = null;
+let partCallback = null;
+
+function MockTune() {
+  this.scale = [1.0, 1.14, 1.32, 1.52, 1.74]; // 5-tone slendro mock
+  this.mode = { output: 'frequency', input: 'step' };
+  this.tonic = 261.6255653;
+  this.loadScale = (name) => {
+    loadedScaleName = name;
+  };
+  this.tonicize = (t) => {
+    this.tonic = t;
+  };
+  this.note = (midiNote) => {
+    notesPassedToTune.push(midiNote);
+    return 346.0155; // Expected microtonal frequency in Hz
+  };
+}
+
+const mockOscillatorParam = {
+  value: 440,
+  setValueAtTime: (val, time) => {
+    oscillatorFrequencySet = { val, time };
+  }
+};
+
+const sandbox = {
+  window: {},
+  document: {
+    getElementById: () => ({
+      addEventListener: () => {},
+      classList: { add: () => {}, remove: () => {} },
+      style: {},
+      textContent: ''
+    }),
+    querySelectorAll: () => []
+  },
+  console: console,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  Tune: MockTune,
+  Tone: {
+    Volume: function() { this.chain = () => {}; this.connect = () => this; this.volume = { value: 0 }; },
+    Limiter: function() {},
+    Reverb: function() { this.wet = { value: 0 }; },
+    Panner: function() { this.connect = () => this; this.pan = { setValueAtTime: () => {} }; },
+    PolySynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.frequency = mockOscillatorParam;
+      this.triggerAttackRelease = (freq, dur, time, vel) => {
+        synthTriggeredFreq = freq;
+      };
+      this.releaseAll = () => {};
+    },
+    PluckSynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = () => {};
+    },
+    Synth: function() {},
+    Destination: {},
+    Frequency: () => ({ toFrequency: () => 440, toMidi: () => 60 }),
+    Transport: {
+      bpm: { value: 120 },
+      seconds: 0,
+      start: () => {},
+      pause: () => {},
+      stop: () => {},
+      cancel: () => {},
+      schedule: () => {}
+    },
+    Part: function(cb, events) {
+      partCallback = cb;
+      this.start = () => {};
+      this.dispose = () => {};
+    },
+    Draw: { schedule: (fn) => fn() },
+    now: () => 0.5,
+    context: { state: 'running' }
+  },
+  p5: function() {}
+};
+sandbox.window.addEventListener = () => {};
+
+const script = fs.readFileSync('frontend/script.js', 'utf8');
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+
+// 1. Blueprint with non-Western Javanese Gamelan modal palette metadata
+const blueprint = {
+  metadata: {
+    scaleName: 'slendro',
+    tuningSystem: 'javanese_gamelan',
+    durationSeconds: 2.0
+  },
+  events: [
+    {
+      timeSeconds: 0.1,
+      midiNote: 64,
+      velocity: 0.8,
+      durationSeconds: 0.3,
+      instrumentId: 'diffuse_pad'
+    }
+  ]
+};
+
+// 2. Schedule blueprint timeline
+sandbox.window.scheduleTimeline(blueprint);
+
+// Verify TuneJS initialized with selected scale
+if (loadedScaleName !== 'slendro') {
+  console.error('Scale not loaded as slendro:', loadedScaleName);
+  process.exit(1);
+}
+
+// 3. Trigger scheduled event
+if (!partCallback) {
+  console.error('Tone.Part callback not captured');
+  process.exit(2);
+}
+partCallback(0.1, blueprint.events[0]);
+
+// 4. Verify target MIDI note 64 was passed through TuneJS
+if (!notesPassedToTune.includes(64)) {
+  console.error('Target MIDI note 64 was not passed to Tune.note():', notesPassedToTune);
+  process.exit(3);
+}
+
+// 5. Verify oscillator frequency was set to microtonal value
+if (!oscillatorFrequencySet || Math.abs(oscillatorFrequencySet.val - 346.0155) > 0.001) {
+  console.error('Oscillator frequency not set correctly:', oscillatorFrequencySet);
+  process.exit(4);
+}
+
+// 6. Verify synth was triggered with microtonal frequency
+if (!synthTriggeredFreq || Math.abs(synthTriggeredFreq - 346.0155) > 0.001) {
+  console.error('Synth not triggered with microtonal frequency:', synthTriggeredFreq);
+  process.exit(5);
+}
+
+// 7. Verify standalone triggerOscillator helper
+let directOscFreq = null;
+const mockOsc = {
+  frequency: {
+    setValueAtTime: (val) => { directOscFreq = val; }
+  },
+  start: () => {}
+};
+sandbox.window.triggerOscillator(mockOsc, 67, 0.2, 0.5);
+if (!notesPassedToTune.includes(67) || Math.abs(directOscFreq - 346.0155) > 0.001) {
+  console.error('triggerOscillator failed:', directOscFreq);
+  process.exit(6);
+}
+
+process.exit(0);
+"""
+        res = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, f"Node TuneJS mock integration test error: {res.stderr}\\n{res.stdout}")
+
+
 if __name__ == "__main__":
     unittest.main()

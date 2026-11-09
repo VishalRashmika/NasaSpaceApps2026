@@ -27,6 +27,15 @@ const state = {
   scaleName: "c_major_pentatonic",
   tuningSystem: "12-EDO",
 
+  // Microtonal Tuning Engine (TuneJS - Task 16)
+  tune: {
+    instance: null,
+    resolvedScale: null,
+    scaleName: "c_major_pentatonic",
+    tuningSystem: "12-EDO",
+    isInitialized: false,
+  },
+
   // Visuals
   activePulses: [],
   eicImage: null,
@@ -484,6 +493,339 @@ function spawnCursorPing(x, y, scalar) {
 }
 
 
+// ============================================================================
+// 2.3 Microtonal Tuning Engine: TuneJS Integration for Non-Western Modal Palettes (Task 16)
+// ============================================================================
+
+/**
+ * Known scale alias registry mapping friendly names and cultural modal palettes
+ * (Indian ragas, Javanese/Balinese gamelan, historic just intonation) to TuneJS
+ * Scala archive tuning identifiers.
+ */
+const TUNEJS_SCALE_MAP = {
+  // Javanese and Balinese Gamelan (slendro, pelog, degung)
+  "slendro": "slendro",
+  "gamelan_slendro": "slendro",
+  "javanese_slendro": "slendro",
+  "pelog": "pelog1",
+  "pelog1": "pelog1",
+  "pelog_laras": "pelog_laras",
+  "gamelan_pelog": "pelog1",
+  "javanese_pelog": "pelog1",
+  "degung": "degung1",
+  "degung1": "degung1",
+  "gamelan_degung": "degung1",
+  "gamelan": "slendro",
+  "javanese_gamelan": "slendro",
+  "gamelan_udan": "gamelan_udan",
+
+  // Indian Ragas & Carnatic/Hindustani modal systems (malkauns, bhairav, sruti)
+  "raga": "malkauns",
+  "indian_raga": "malkauns",
+  "malkauns": "malkauns",
+  "raga_malkauns": "malkauns",
+  "bhairav": "indian-ayyar",
+  "raga_bhairav": "indian-ayyar",
+  "indian": "indian",
+  "indian-ayyar": "indian-ayyar",
+  "indian_12": "indian_12",
+  "sruti": "indian-srutivina",
+  "shruti": "indian-srutivina",
+
+  // Historic and Microtonal Tuning Systems (Just Intonation, Pythagorean, Meantone)
+  "just_intonation": "ji_12",
+  "just": "ji_12",
+  "ji": "ji_12",
+  "ji_12": "ji_12",
+  "pythagorean": "pyth_12",
+  "pyth": "pyth_12",
+  "pyth_12": "pyth_12",
+  "ptolemy": "ptolemy",
+  "mean19": "mean19",
+  "meantone": "mean19",
+  "couperin": "couperin",
+  "partch": "partch_43",
+  "partch_43": "partch_43",
+
+  // Pentatonic & Equal Temperament
+  "c_major_pentatonic": "05-22",
+  "pentatonic": "05-22",
+  "12-edo": "ji_12",
+  "12edo": "ji_12",
+  "12-tet": "ji_12",
+  "equal": "ji_12",
+};
+
+/**
+ * Resolve scaleName and tuningSystem to an exact TuneJS scale identifier.
+ * 
+ * @param {string} scaleName - Musical scale (e.g. 'slendro', 'pelog', 'malkauns', 'ji_12')
+ * @param {string} tuningSystem - Tuning system (e.g. 'javanese_gamelan', 'indian_raga', '12-EDO')
+ * @returns {string} Supported TuneJS scale identifier
+ */
+function resolveTuneScale(scaleName, tuningSystem) {
+  const norm = (s) => (s ? String(s).toLowerCase().trim().replace(/[-\s]+/g, "_") : "");
+  const sKey = norm(scaleName);
+  const tKey = norm(tuningSystem);
+
+  // 1. Direct registry lookup
+  if (sKey && TUNEJS_SCALE_MAP[sKey]) return TUNEJS_SCALE_MAP[sKey];
+  if (tKey && TUNEJS_SCALE_MAP[tKey]) return TUNEJS_SCALE_MAP[tKey];
+
+  // 2. Global TuningList lookup from TuneJS if loaded
+  const tuningList = (typeof TuningList !== "undefined")
+    ? TuningList
+    : (typeof window !== "undefined" && window.TuningList ? window.TuningList : null);
+
+  if (tuningList) {
+    if (scaleName && tuningList[scaleName]) return scaleName;
+    if (tuningSystem && tuningList[tuningSystem]) return tuningSystem;
+    if (sKey && tuningList[sKey]) return sKey;
+    if (tKey && tuningList[tKey]) return tKey;
+  }
+
+  // 3. Cultural palette keyword matching
+  if (sKey.includes("slendro") || tKey.includes("slendro")) return "slendro";
+  if (sKey.includes("pelog") || tKey.includes("pelog")) return "pelog1";
+  if (sKey.includes("degung") || tKey.includes("degung")) return "degung1";
+  if (sKey.includes("gamelan") || tKey.includes("gamelan")) return "slendro";
+
+  if (sKey.includes("malkauns") || tKey.includes("malkauns")) return "malkauns";
+  if (sKey.includes("bhairav") || tKey.includes("bhairav")) return "indian-ayyar";
+  if (sKey.includes("raga") || tKey.includes("raga") || sKey.includes("india") || tKey.includes("india")) return "malkauns";
+  if (sKey.includes("sruti") || tKey.includes("sruti") || sKey.includes("shruti")) return "indian-srutivina";
+
+  if (sKey.includes("just") || tKey.includes("just") || sKey.includes("ji") || tKey.includes("ji")) return "ji_12";
+  if (sKey.includes("pyth") || tKey.includes("pyth")) return "pyth_12";
+
+  return "slendro";
+}
+
+/**
+ * Enhance TuneJS frequency calculation to map standard MIDI note numbers
+ * (e.g., MIDI 60 = Middle C = 261.6256 Hz) accurately to microtonal modal scales.
+ * 
+ * @param {Object} tuneInstance - TuneJS instance to configure
+ */
+function patchTuneFrequencyForMidi(tuneInstance) {
+  if (!tuneInstance || tuneInstance._patchedForMidi) return;
+
+  const origFrequency = tuneInstance.frequency;
+  tuneInstance.frequency = function(stepIn, octaveIn) {
+    if (typeof stepIn === "number" && this.scale && this.scale.length > 0) {
+      if (this.mode.input === "midi" || this.mode.input === "MIDI" || stepIn >= 12) {
+        const numDegrees = this.scale.length;
+        const baseC4Hz = 261.6255653006;
+        if (numDegrees === 12) {
+          const oct = Math.floor(stepIn / 12);
+          const deg = stepIn % 12;
+          const tonic0 = 440.0 * Math.pow(2.0, -69.0 / 12.0);
+          return Math.floor(tonic0 * this.scale[deg] * Math.pow(2.0, oct) * 1e8) / 1e8;
+        } else {
+          // Map octaves relative to Middle C (MIDI 60)
+          const octOffset = Math.floor((stepIn - 60) / 12);
+          const semitone = ((stepIn % 12) + 12) % 12;
+          const deg = Math.round(semitone * (numDegrees / 12)) % numDegrees;
+          const octAdd = (octaveIn || 0) + octOffset;
+          const freq = baseC4Hz * this.scale[deg] * Math.pow(2.0, octAdd);
+          return Math.floor(freq * 1e8) / 1e8;
+        }
+      }
+    }
+    return origFrequency ? origFrequency.call(this, stepIn, octaveIn) : 440.0;
+  };
+  tuneInstance._patchedForMidi = true;
+}
+
+/**
+ * Initialize TuneJS instance with the selected scale resolved from JSON metadata.
+ * 
+ * @param {string} scaleName - Musical scale name (e.g. 'slendro', 'pelog', 'malkauns', 'c_major_pentatonic')
+ * @param {string} tuningSystem - Tuning system descriptor (e.g. 'javanese_gamelan', 'indian_raga', '12-EDO')
+ * @returns {Object|null} Initialized TuneJS instance or null if library unavailable
+ */
+function initTune(scaleName, tuningSystem) {
+  const sName = scaleName || state.scaleName || "c_major_pentatonic";
+  const tSystem = tuningSystem || state.tuningSystem || "12-EDO";
+
+  state.scaleName = sName;
+  state.tuningSystem = tSystem;
+
+  const TuneClass = (typeof Tune !== "undefined")
+    ? Tune
+    : (typeof window !== "undefined" && window.Tune ? window.Tune : null);
+
+  if (!TuneClass) {
+    state.tune.isInitialized = false;
+    return null;
+  }
+
+  try {
+    if (!state.tune.instance) {
+      state.tune.instance = new TuneClass();
+    }
+    const tuneInstance = state.tune.instance;
+
+    // Resolve scale identifier
+    const targetScale = resolveTuneScale(sName, tSystem);
+    state.tune.resolvedScale = targetScale;
+    state.tune.scaleName = sName;
+    state.tune.tuningSystem = tSystem;
+
+    // Load scale into TuneJS
+    if (typeof tuneInstance.loadScale === "function") {
+      tuneInstance.loadScale(targetScale);
+    }
+
+    // Tonicize scale to Middle C / concert pitch
+    if (typeof tuneInstance.tonicize === "function") {
+      const scaleLen = (tuneInstance.scale && tuneInstance.scale.length) ? tuneInstance.scale.length : 12;
+      if (scaleLen === 12) {
+        tuneInstance.tonicize(440.0 * Math.pow(2.0, -69.0 / 12.0));
+      } else {
+        tuneInstance.tonicize(261.6255653006);
+      }
+    }
+
+    // Enhance TuneJS frequency calculator for MIDI note translation
+    patchTuneFrequencyForMidi(tuneInstance);
+
+    state.tune.isInitialized = true;
+    console.log(`[Earth Jukebox] TuneJS initialized: scale="${targetScale}", system="${tSystem}"`);
+    return tuneInstance;
+  } catch (err) {
+    console.warn("[Earth Jukebox] TuneJS initialization error:", err);
+    return state.tune.instance;
+  }
+}
+
+/**
+ * Pass a target MIDI note through TuneJS to get the exact microtonal frequency in Hz.
+ * 
+ * @param {number} targetMidi - Target MIDI note number (e.g. 60 for C4, 48 for C3)
+ * @returns {number} Exact microtonal frequency in Hz
+ */
+function getTunedFrequency(targetMidi) {
+  if (typeof targetMidi !== "number" || isNaN(targetMidi)) {
+    return 440.0;
+  }
+
+  // Ensure TuneJS is initialized
+  let tuneInstance = state.tune.instance;
+  if (!tuneInstance) {
+    tuneInstance = initTune(state.scaleName, state.tuningSystem);
+  }
+
+  // Pass target MIDI note through TuneJS note() method
+  if (tuneInstance && typeof tuneInstance.note === "function") {
+    try {
+      const tunedHz = tuneInstance.note(targetMidi);
+      if (typeof tunedHz === "number" && !isNaN(tunedHz) && tunedHz > 0) {
+        return tunedHz;
+      }
+    } catch (err) {
+      console.warn("[Earth Jukebox] TuneJS note calculation error:", err);
+    }
+  }
+
+  // Fallback to standard 12-tone equal temperament
+  if (Tone && Tone.Frequency && typeof Tone.Frequency === "function") {
+    try {
+      return Tone.Frequency(targetMidi, "midi").toFrequency();
+    } catch (_) {}
+  }
+  return 440.0 * Math.pow(2.0, (targetMidi - 69.0) / 12.0);
+}
+
+/**
+ * Set a Tone.js oscillator or synthesizer voice frequency to the exact microtonal value.
+ * Supports Tone.Oscillator, Tone.Synth, Tone.PolySynth, and native Web Audio OscillatorNode.
+ * 
+ * @param {Object} synthOrOsc - Tone.js synth, oscillator, or voice node
+ * @param {number} freq - Exact microtonal frequency in Hz
+ * @param {number} [time] - AudioContext timestamp for sample-accurate scheduling
+ */
+function setOscillatorFrequency(synthOrOsc, freq, time) {
+  if (!synthOrOsc || typeof freq !== "number" || isNaN(freq) || freq <= 0) return;
+
+  // 1. Direct frequency AudioParam or Signal (Tone.Oscillator, native OscillatorNode)
+  if (synthOrOsc.frequency) {
+    if (typeof synthOrOsc.frequency.setValueAtTime === "function" && typeof time === "number") {
+      synthOrOsc.frequency.setValueAtTime(freq, time);
+    } else if ("value" in synthOrOsc.frequency) {
+      synthOrOsc.frequency.value = freq;
+    } else if (typeof synthOrOsc.frequency.set === "function") {
+      synthOrOsc.frequency.set(freq);
+    }
+  }
+
+  // 2. Synth with internal oscillator (Tone.Synth)
+  if (synthOrOsc.oscillator && synthOrOsc.oscillator.frequency) {
+    if (typeof synthOrOsc.oscillator.frequency.setValueAtTime === "function" && typeof time === "number") {
+      synthOrOsc.oscillator.frequency.setValueAtTime(freq, time);
+    } else if ("value" in synthOrOsc.oscillator.frequency) {
+      synthOrOsc.oscillator.frequency.value = freq;
+    }
+  }
+
+  // 3. PolySynth / Synth parameter update via set()
+  if (typeof synthOrOsc.set === "function") {
+    try {
+      synthOrOsc.set({ frequency: freq });
+    } catch (_) {}
+  }
+
+  // 4. PolySynth voice iteration if active voices exist
+  if (Array.isArray(synthOrOsc.voices)) {
+    for (const voice of synthOrOsc.voices) {
+      if (voice && voice.oscillator && voice.oscillator.frequency) {
+        if (typeof voice.oscillator.frequency.setValueAtTime === "function" && typeof time === "number") {
+          voice.oscillator.frequency.setValueAtTime(freq, time);
+        } else if ("value" in voice.oscillator.frequency) {
+          voice.oscillator.frequency.value = freq;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Pass a target MIDI note through TuneJS and trigger a Tone.js oscillator or synth
+ * with the exact microtonal frequency in Hz.
+ * 
+ * @param {Object} synthOrOsc - Tone.js oscillator or synth instance
+ * @param {number} targetMidi - Target MIDI note number
+ * @param {number} [time] - AudioContext scheduling time in seconds
+ * @param {number} [duration=0.2] - Duration in seconds
+ * @param {number} [velocity=0.8] - Velocity in [0.0, 1.0]
+ * @returns {number} Exact tuned microtonal frequency in Hz
+ */
+function triggerOscillator(synthOrOsc, targetMidi, time, duration, velocity) {
+  const freq = getTunedFrequency(targetMidi);
+  const t = typeof time === "number" ? time : (Tone && Tone.now ? Tone.now() : 0);
+  const dur = typeof duration === "number" ? duration : 0.2;
+  const vel = typeof velocity === "number" ? velocity : 0.8;
+
+  // Set the oscillator frequency before triggering
+  setOscillatorFrequency(synthOrOsc, freq, t);
+
+  if (synthOrOsc) {
+    if (typeof synthOrOsc.triggerAttackRelease === "function") {
+      synthOrOsc.triggerAttackRelease(freq, dur, t, vel);
+    } else if (typeof synthOrOsc.triggerAttack === "function") {
+      synthOrOsc.triggerAttack(freq, t, vel);
+    } else if (typeof synthOrOsc.start === "function") {
+      synthOrOsc.start(t);
+      if (typeof synthOrOsc.stop === "function") {
+        synthOrOsc.stop(t + dur);
+      }
+    }
+  }
+
+  return freq;
+}
+
+
 /**
  * Ensure AudioContext is unlocked following browser autoplay policy.
  */
@@ -519,15 +861,35 @@ function triggerAudioEvent(time, ev) {
         ev.instrumentId.includes("hotspot")
       ));
 
-    // Resolve pitch / frequency
-    let pitch = ev.frequency || ev.pitch;
-    if (!pitch) {
-      if (typeof ev.midiNote === "number") {
-        pitch = (Tone.Frequency ? Tone.Frequency(ev.midiNote, "midi").toFrequency() : 440);
-      } else if (typeof ev.midi_note === "number") {
-        pitch = (Tone.Frequency ? Tone.Frequency(ev.midi_note, "midi").toFrequency() : 440);
-      } else {
-        pitch = 440;
+    // Resolve target MIDI note and pitch
+    // Task 16: Pass target MIDI note through TuneJS to get exact microtonal frequency in Hz
+    let targetMidi = null;
+    if (typeof ev.midiNote === "number") {
+      targetMidi = ev.midiNote;
+    } else if (typeof ev.midi_note === "number") {
+      targetMidi = ev.midi_note;
+    } else if (typeof ev.midi === "number") {
+      targetMidi = ev.midi;
+    } else if (typeof ev.pitch === "number" && ev.pitch >= 12 && ev.pitch <= 127) {
+      targetMidi = Math.round(ev.pitch);
+    } else if (typeof ev.frequency === "number" && Tone && Tone.Frequency && typeof Tone.Frequency === "function") {
+      try {
+        targetMidi = Math.round(Tone.Frequency(ev.frequency).toMidi());
+      } catch (_) {}
+    } else if (typeof ev.pitch === "number" && Tone && Tone.Frequency && typeof Tone.Frequency === "function") {
+      try {
+        targetMidi = Math.round(Tone.Frequency(ev.pitch).toMidi());
+      } catch (_) {}
+    }
+
+    let pitch = null;
+    if (targetMidi !== null) {
+      pitch = getTunedFrequency(targetMidi);
+    }
+    if (!pitch || isNaN(pitch) || pitch <= 0) {
+      pitch = ev.frequency || ev.pitch;
+      if (!pitch) {
+        pitch = 440.0;
       }
     }
 
@@ -556,12 +918,20 @@ function triggerAudioEvent(time, ev) {
       }
     }
 
-    // Trigger synthesis on the mapped synth with sub-millisecond precision
+    // Task 16: Before triggering a Tone.js oscillator, set oscillator's frequency to that microtonal value
+    setOscillatorFrequency(synth, pitch, time);
+
+    // Trigger synthesis on the mapped synth or oscillator with sub-millisecond precision
     if (synth) {
       if (typeof synth.triggerAttackRelease === "function") {
         synth.triggerAttackRelease(pitch, durSec, time, vel);
       } else if (typeof synth.triggerAttack === "function") {
         synth.triggerAttack(pitch, time, vel);
+      } else if (typeof synth.start === "function") {
+        synth.start(time);
+        if (typeof synth.stop === "function" && typeof durSec === "number") {
+          synth.stop(time + durSec);
+        }
       }
     }
 
@@ -619,8 +989,10 @@ function scheduleTimeline(blueprint) {
     (meta.duration_ms ? meta.duration_ms / 1000.0 : null) ||
     5.0;
   state.scanGeometry = meta.scanGeometry || meta.scan_geometry || meta.geometry_type || "horizontal_sweep";
-  state.scaleName = meta.scaleName || meta.scale_name || "c_major_pentatonic";
-  state.tuningSystem = meta.tuningSystem || meta.tuning_system || "12-EDO";
+  // Task 16: Read scaleName & tuningSystem from JSON metadata and initialize TuneJS
+  state.scaleName = meta.scaleName || meta.scale_name || meta.scale || "c_major_pentatonic";
+  state.tuningSystem = meta.tuningSystem || meta.tuning_system || meta.tuning || "12-EDO";
+  initTune(state.scaleName, state.tuningSystem);
 
   Tone.Transport.loop = false;
   Tone.Transport.loopEnd = state.durationSeconds;
@@ -1367,7 +1739,14 @@ function updateMetadataUI() {
 
   if (metaGeo) metaGeo.textContent = state.scanGeometry;
   if (metaScale) metaScale.textContent = state.scaleName;
-  if (metaTuning) metaTuning.textContent = state.tuningSystem;
+  if (metaTuning) {
+    const resolved = state.tune && state.tune.resolvedScale;
+    if (resolved && resolved !== state.tuningSystem && resolved !== state.scaleName) {
+      metaTuning.textContent = `${state.tuningSystem} (${resolved})`;
+    } else {
+      metaTuning.textContent = state.tuningSystem;
+    }
+  }
   if (metaDuration) metaDuration.textContent = `${state.durationSeconds.toFixed(2)}s`;
   if (metaEvents) metaEvents.textContent = state.events.length;
 
@@ -2003,6 +2382,25 @@ function setupEventListeners() {
     });
   }
 
+  // Modal Palette Selector (Task 16)
+  const selectPalette = document.getElementById("select-tuning-palette");
+  if (selectPalette) {
+    selectPalette.addEventListener("change", (e) => {
+      const chosen = e.target.value;
+      if (chosen === "auto") {
+        if (state.blueprint && state.blueprint.metadata) {
+          const m = state.blueprint.metadata;
+          initTune(m.scaleName || m.scale_name || "c_major_pentatonic", m.tuningSystem || m.tuning_system || "12-EDO");
+        } else {
+          initTune("c_major_pentatonic", "12-EDO");
+        }
+      } else {
+        initTune(chosen, chosen);
+      }
+      updateMetadataUI();
+    });
+  }
+
   // Keyboard Shortcuts: Space = Play/Pause, Esc = Stop
   window.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") return;
@@ -2067,6 +2465,15 @@ if (typeof window !== "undefined") {
   window.generateProceduralScalarData = generateProceduralScalarData;
   window.parseScalarDataset = parseScalarDataset;
   window.spatialCursorState = state.spatialCursor;
+
+  // Microtonal Tuning API exports (Task 16)
+  window.initTune = initTune;
+  window.getTunedFrequency = getTunedFrequency;
+  window.resolveTuneScale = resolveTuneScale;
+  window.setOscillatorFrequency = setOscillatorFrequency;
+  window.triggerOscillator = triggerOscillator;
+  window.patchTuneFrequencyForMidi = patchTuneFrequencyForMidi;
+  window.tuneState = state.tune;
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -2094,5 +2501,14 @@ if (typeof module !== "undefined" && module.exports) {
     generateProceduralScalarData,
     parseScalarDataset,
     spatialCursorState: state.spatialCursor,
+
+    // Microtonal Tuning API exports (Task 16)
+    initTune,
+    getTunedFrequency,
+    resolveTuneScale,
+    setOscillatorFrequency,
+    triggerOscillator,
+    patchTuneFrequencyForMidi,
+    tuneState: state.tune,
   };
 }
