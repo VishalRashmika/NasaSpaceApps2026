@@ -40,6 +40,14 @@ from backend.pipeline import (
     load_image,
     preprocess_image,
 )
+from backend.scanner import (
+    generate_scan_path,
+    map_parameters,
+)
+from backend.synthesizer import (
+    export_json_timeline,
+    synthesize_wav,
+)
 
 logger = logging.getLogger("earth_jukebox.main")
 
@@ -52,6 +60,12 @@ def run_pipeline(
     preprocess: bool = False,
     separate_morphology: bool = False,
     return_metadata: bool = False,
+    sonify: bool = False,
+    audio_output_path: Optional[Union[str, Path]] = None,
+    timeline_output_path: Optional[Union[str, Path]] = None,
+    geometry: str = "horizontal_sweep",
+    scale_name: str = "c_major_pentatonic",
+    duration: float = 10.0,
     **kwargs: Any,
 ) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, Any]]]:
     """
@@ -96,6 +110,47 @@ def run_pipeline(
             point_sources = detect_point_sources(morph_layers["point_source_layer"], **kwargs)
             morph_layers["point_sources"] = point_sources
         metadata["morphology"] = morph_layers
+
+    # Sonification generation if requested
+    if sonify or audio_output_path is not None or timeline_output_path is not None:
+        h, w = scalar_array.shape[:2]
+        scan_path = generate_scan_path(
+            geometry_type=geometry,
+            width=w,
+            height=h,
+            duration_seconds=duration,
+            **kwargs,
+        )
+        point_sources_list = None
+        diffuse_layer_arr = None
+        if "morphology" in metadata:
+            diffuse_layer_arr = metadata["morphology"].get("diffuse_layer")
+            point_sources_list = metadata["morphology"].get("point_sources")
+
+        audio_events = map_parameters(
+            scan_path=scan_path,
+            scalar_array=diffuse_layer_arr if diffuse_layer_arr is not None else scalar_array,
+            point_sources=point_sources_list,
+            scale_name=scale_name,
+            **kwargs,
+        )
+
+        sonif_meta: Dict[str, Any] = {
+            "geometry": geometry,
+            "scale_name": scale_name,
+            "duration": duration,
+            "num_events": len(audio_events),
+        }
+
+        if audio_output_path is not None:
+            wav_path = synthesize_wav(audio_events, output_path=audio_output_path, **kwargs)
+            sonif_meta["audio_path"] = str(wav_path)
+
+        if timeline_output_path is not None:
+            export_json_timeline(audio_events, output_path=timeline_output_path, scale_name=scale_name, scan_geometry=geometry)
+            sonif_meta["timeline_path"] = str(timeline_output_path)
+
+        metadata["sonification"] = sonif_meta
 
     if output_path is not None:
         out_p = Path(output_path)
@@ -153,6 +208,32 @@ def main() -> None:
         action="store_true",
         help="Detect isolated point sources and extract spatial/photometric metadata",
     )
+    parser.add_argument(
+        "--audio-output",
+        default=None,
+        help="Optional output path for synthesized .wav sonification file",
+    )
+    parser.add_argument(
+        "--timeline-output",
+        default=None,
+        help="Optional output path for JSON timeline blueprint for web frontend",
+    )
+    parser.add_argument(
+        "--geometry",
+        default="horizontal_sweep",
+        help="Scanhead geometry (horizontal_sweep, vertical_sweep, radar_sweep, radial_expansion)",
+    )
+    parser.add_argument(
+        "--scale",
+        default="c_major_pentatonic",
+        help="Musical scale for parameter quantization",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=10.0,
+        help="Sonification audio duration in seconds (default: 10.0)",
+    )
     args = parser.parse_args()
 
     try:
@@ -162,14 +243,25 @@ def main() -> None:
             output_path=args.output,
             method=args.method,
             preprocess=args.preprocess,
-            separate_morphology=args.separate_features or args.detect_sources,
-            detect_point_sources=args.detect_sources,
+            separate_morphology=args.separate_features or args.detect_sources or (args.audio_output is not None),
+            detect_point_sources=args.detect_sources or (args.audio_output is not None),
+            audio_output_path=args.audio_output,
+            timeline_output_path=args.timeline_output,
+            geometry=args.geometry,
+            scale_name=args.scale,
+            duration=args.duration,
             return_metadata=True,
         )
         print(
             f"Extraction successful! Method: {meta.get('method')} | "
             f"Shape: {scalar.shape} | Range: [{scalar.min():.4f}, {scalar.max():.4f}]"
         )
+        if "sonification" in meta:
+            son = meta["sonification"]
+            if "audio_path" in son:
+                print(f"Sonification audio synthesized: {son['audio_path']}")
+            if "timeline_path" in son:
+                print(f"Timeline blueprint exported: {son['timeline_path']}")
     except Exception as e:
         print(f"Error executing pipeline: {e}", file=sys.stderr)
         sys.exit(1)

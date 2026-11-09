@@ -39,6 +39,22 @@ from backend.scanner import (
     midi_to_frequency,
     quantize_to_scale,
 )
+from backend.synthesizer import (
+    DEFAULT_DIFFUSE_WAVEFORM,
+    DEFAULT_SAMPLE_RATE,
+    SampleManager,
+    SampleNotFoundError,
+    SynthesisResult,
+    SynthesizerError,
+    export_json_timeline,
+    generate_default_samples,
+    generate_waveform,
+    mix_tracks,
+    pitch_shift_segment,
+    synthesize_diffuse_track,
+    synthesize_point_sources_track,
+    synthesize_wav,
+)
 
 __all__ = [
     # Pipeline
@@ -75,4 +91,19 @@ __all__ = [
     "midi_to_frequency",
     "MUSICAL_SCALES",
     "DEFAULT_CHANNEL_REGISTERS",
+    # Synthesizer
+    "synthesize_wav",
+    "export_json_timeline",
+    "generate_waveform",
+    "synthesize_diffuse_track",
+    "synthesize_point_sources_track",
+    "mix_tracks",
+    "pitch_shift_segment",
+    "generate_default_samples",
+    "SampleManager",
+    "SynthesizerError",
+    "SampleNotFoundError",
+    "SynthesisResult",
+    "DEFAULT_SAMPLE_RATE",
+    "DEFAULT_DIFFUSE_WAVEFORM",
 ]

@@ -5,8 +5,9 @@ Unit tests for backend/pipeline.py: Primary Data Extraction Pathway (Colorbar Pa
 import os
 import tempfile
 import unittest
-import numpy as np
 import cv2
+import numpy as np
+import soundfile as sf
 
 from backend.pipeline import (
     extract_data,
@@ -644,6 +645,32 @@ class TestPreprocessImage(unittest.TestCase):
         self.assertEqual(scalar.shape, (100, 100))
         self.assertIn("preprocessing", meta)
         self.assertTrue(meta["preprocessing"]["apply_clahe"])
+
+    def test_run_pipeline_integration_with_sonification(self):
+        """Verify backend/main.py run_pipeline works with audio_output_path and sonification."""
+        canvas = np.zeros((60, 60, 3), dtype=np.uint8)
+        canvas[15:45, 15:45] = 200
+        test_path = os.path.join(self.temp_dir.name, "pipeline_sonif.png")
+        audio_path = os.path.join(self.temp_dir.name, "sonif.wav")
+        timeline_path = os.path.join(self.temp_dir.name, "timeline.json")
+        cv2.imwrite(test_path, canvas)
+
+        scalar, meta = run_pipeline(
+            test_path,
+            method="vq",
+            colormap_name="jet",
+            preprocess=False,
+            audio_output_path=audio_path,
+            timeline_output_path=timeline_path,
+            duration=1.0,
+            return_metadata=True,
+        )
+        self.assertIn("sonification", meta)
+        self.assertTrue(os.path.exists(audio_path))
+        self.assertTrue(os.path.exists(timeline_path))
+        info = sf.info(audio_path)
+        self.assertEqual(info.channels, 2)
+        self.assertEqual(info.samplerate, 44100)
 
 
 if __name__ == "__main__":
