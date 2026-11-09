@@ -8,11 +8,14 @@ import numpy as np
 from backend.scanner import (
     DEFAULT_CHANNEL_REGISTERS,
     MUSICAL_SCALES,
+    AudioEventList,
     ScanGeometry,
     ScanHead,
     compress_dynamic_range,
     frequency_to_midi,
     generate_scan_path,
+    get_scale_midi_notes,
+    infer_scan_geometry,
     map_parameters,
     midi_to_frequency,
     quantize_to_scale,
@@ -378,6 +381,57 @@ class TestParameterMappingAndQuantization(unittest.TestCase):
         self.assertLess(compressed[3], compressed[4])
         self.assertAlmostEqual(compressed[5], 1.0, places=4)
 
+    def test_compress_dynamic_range_methods_and_power_law(self):
+        """Verify logarithmic, arcsinh, and power-law gamma adjustments."""
+        v = 0.5
+        # Arcsinh vs Log vs Linear
+        c_arcsinh = compress_dynamic_range(v, method="arcsinh", alpha=10.0, noise_floor=0.0)
+        c_log = compress_dynamic_range(v, method="log", alpha=10.0, noise_floor=0.0)
+        c_linear = compress_dynamic_range(v, method="linear", noise_floor=0.0)
+
+        self.assertIsInstance(c_arcsinh, float)
+        self.assertIsInstance(c_log, float)
+        self.assertAlmostEqual(c_linear, 0.5)
+        self.assertGreater(c_arcsinh, 0.0)
+        self.assertGreater(c_log, 0.0)
+
+        # Power-law curve: gamma > 1 suppresses midtones, gamma < 1 expands midtones
+        c_gamma2 = compress_dynamic_range(v, method="linear", gamma=2.0, noise_floor=0.0)
+        c_gamma05 = compress_dynamic_range(v, method="linear", gamma=0.5, noise_floor=0.0)
+        self.assertAlmostEqual(c_gamma2, 0.25)
+        self.assertAlmostEqual(c_gamma05, np.sqrt(0.5))
+
+        # Invalid method raises ValueError
+        with self.assertRaises(ValueError):
+            compress_dynamic_range(v, method="unsupported_curve")
+
+    def test_musical_quantization_various_scales(self):
+        """Verify quantization across multiple scales and note array generation."""
+        # Minor pentatonic: [0, 3, 5, 7, 10]
+        c_min_pc = {0, 3, 5, 7, 10}
+        test_freqs = [150.0, 220.0, 350.0, 500.0, 750.0]
+        q_freq, q_midi = quantize_to_scale(test_freqs, scale_name="minor_pentatonic")
+        for m in q_midi:
+            self.assertIn(int(m) % 12, c_min_pc)
+
+        # Blues scale: [0, 3, 5, 6, 7, 10]
+        blues_pc = {0, 3, 5, 6, 7, 10}
+        _, q_blues = quantize_to_scale(test_freqs, scale_name="blues")
+        for m in q_blues:
+            self.assertIn(int(m) % 12, blues_pc)
+
+        # Check get_scale_midi_notes
+        notes = get_scale_midi_notes("c_major_pentatonic", root_midi=48, min_midi=48, max_midi=60)
+        expected_pc = {0, 2, 4, 7, 9}
+        for n in notes:
+            self.assertIn(int(n) % 12, expected_pc)
+            self.assertGreaterEqual(n, 48)
+            self.assertLessEqual(n, 60)
+
+        # Unknown scale raises ValueError
+        with self.assertRaises(ValueError):
+            quantize_to_scale(440.0, scale_name="nonexistent_scale")
+
     def test_map_parameters_full_pipeline(self):
         """Verify map_parameters generates diffuse events and point source triggers."""
         # 40x40 scalar array with smooth background
@@ -416,6 +470,221 @@ class TestParameterMappingAndQuantization(unittest.TestCase):
         self.assertIn("pan", p_event)
         self.assertEqual(p_event["instrument"], "point_source_pluck")
         self.assertEqual(p_event["layer"], "point_source")
+
+    def test_audio_event_list_interface(self):
+        """Verify AudioEventList dual list-and-dict interface."""
+        scalar = np.full((30, 30), 0.5, dtype=np.float32)
+        coords = generate_scan_path("horizontal_sweep", 30, 30, 3.0, num_steps=5, samples_per_step=5)
+        point_sources = [{"x": 15.0, "y": 15.0, "flux": 0.9, "radius": 3.0}]
+
+        result = map_parameters(coords, scalar, point_sources=point_sources)
+
+        # 1. Standard list behavior
+        self.assertIsInstance(result, list)
+        self.assertIsInstance(result, AudioEventList)
+        self.assertGreater(len(result), 0)
+        self.assertIsInstance(result[0], dict)
+
+        # Can iterate like a list
+        iter_count = 0
+        for ev in result:
+            self.assertIn("time", ev)
+            iter_count += 1
+        self.assertEqual(iter_count, len(result))
+
+        # 2. Dictionary key lookup behavior
+        self.assertIn("diffuse_events", result)
+        self.assertIn("point_source_events", result)
+        self.assertIn("metadata", result)
+        self.assertIn("events", result)
+
+        self.assertEqual(len(result["point_source_events"]), 1)
+        self.assertEqual(len(result["diffuse_events"]) + len(result["point_source_events"]), len(result))
+
+        # 3. Attribute access
+        self.assertEqual(result.point_source_events, result["point_source_events"])
+        self.assertEqual(result.metadata["geometry_type"], "horizontal_sweep")
+
+        # 4. to_dict conversion
+        d = result.to_dict()
+        self.assertIsInstance(d, dict)
+        self.assertIn("events", d)
+        self.assertIn("metadata", d)
+
+        # 5. return_dict option
+        dict_result = map_parameters(coords, scalar, return_dict=True)
+        self.assertIsInstance(dict_result, dict)
+
+    def test_map_parameters_volume_noise_floor_gate(self):
+        """Verify noise-floor gate mutes all luminance below 10%."""
+        # Half dark (< 0.10) and half bright (0.50)
+        scalar = np.full((20, 20), 0.05, dtype=np.float32)
+        scalar[10:, :] = 0.50
+
+        coords = generate_scan_path("horizontal_sweep", 20, 20, 2.0, num_steps=6, samples_per_step=6)
+        result = map_parameters(coords, scalar, noise_floor=0.10)
+
+        # Diffuse events should only exist for pixels where y >= 10 (luminance = 0.50)
+        for ev in result["diffuse_events"]:
+            self.assertGreater(ev["velocity"], 0.0)
+            self.assertGreaterEqual(ev["y"], 9.0)
+
+    def test_map_parameters_pitch_and_pan_mapping(self):
+        """Verify pitch and pan mapping along the scanhead."""
+        h, w = 30, 30
+        scalar = np.full((h, w), 0.8, dtype=np.float32)
+        coords = generate_scan_path("horizontal_sweep", w, h, 3.0, num_steps=5, samples_per_step=5)
+
+        result = map_parameters(
+            coords,
+            scalar,
+            base_freq=130.81,  # C3
+            max_freq=1046.50,  # C6
+            scale_name="c_major_pentatonic",
+        )
+
+        diffuse = result["diffuse_events"]
+        self.assertGreater(len(diffuse), 0)
+
+        # Check field presence in each event
+        for ev in diffuse:
+            self.assertIn("time", ev)
+            self.assertIn("time_ms", ev)
+            self.assertIn("duration", ev)
+            self.assertIn("duration_ms", ev)
+            self.assertIn("frequency", ev)
+            self.assertIn("pitch", ev)
+            self.assertIn("midi_note", ev)
+            self.assertIn("velocity", ev)
+            self.assertIn("amplitude", ev)
+            self.assertIn("pan", ev)
+            self.assertIn("instrument", ev)
+            self.assertIn("instrumentId", ev)
+            self.assertIn("layer", ev)
+            self.assertIn("spatialPosition", ev)
+            self.assertEqual(ev["layer"], "diffuse")
+            self.assertEqual(ev["instrument"], "diffuse_pad")
+            self.assertGreaterEqual(ev["pan"], -1.0)
+            self.assertLessEqual(ev["pan"], 1.0)
+            self.assertGreaterEqual(ev["frequency"], 100.0)
+            self.assertLessEqual(ev["frequency"], 1200.0)
+            # Pitch class in C major pentatonic
+            self.assertIn(ev["midi_note"] % 12, {0, 2, 4, 7, 9})
+
+    def test_map_parameters_all_geometries_point_source_timing(self):
+        """Verify point source crossing time calculation across all 4 geometries."""
+        w, h = 50, 50
+        scalar = np.full((h, w), 0.2, dtype=np.float32)
+        pt = [{"x": 25.0, "y": 25.0, "flux": 0.9, "radius": 3.0}]
+        duration = 10.0
+
+        for geom in ["horizontal_sweep", "vertical_sweep", "radar_sweep", "radial_expansion"]:
+            coords = generate_scan_path(geom, w, h, duration, num_steps=6, samples_per_step=6)
+            res = map_parameters(coords, scalar, point_sources=pt, scan_geometry=geom)
+
+            points = res["point_source_events"]
+            self.assertEqual(len(points), 1)
+            p_ev = points[0]
+            self.assertEqual(p_ev["instrument"], "point_source_pluck")
+            self.assertEqual(p_ev["layer"], "point_source")
+            self.assertGreaterEqual(p_ev["time"], 0.0)
+            self.assertLessEqual(p_ev["time"], duration + 0.1)
+
+    def test_map_parameters_diffuse_layer_and_dict_inputs(self):
+        """Verify passing diffuse_layer directly and passing morphology dict."""
+        diffuse = np.full((25, 25), 0.4, dtype=np.float32)
+        residual = np.zeros((25, 25), dtype=np.float32)
+        residual[12, 12] = 0.9  # Point source
+
+        coords = generate_scan_path("horizontal_sweep", 25, 25, 2.5, num_steps=5, samples_per_step=5)
+
+        # 1. Passing diffuse_layer as explicit kwarg
+        res1 = map_parameters(coords, scalar_array=diffuse, diffuse_layer=diffuse)
+        self.assertGreater(len(res1["diffuse_events"]), 0)
+
+        # 2. Passing morphological separation dictionary
+        morph_dict = {
+            "diffuse_layer": diffuse,
+            "point_source_layer": residual,
+            "point_sources": [{"x": 12.0, "y": 12.0, "flux": 0.9, "radius": 3.0}],
+        }
+        res2 = map_parameters(coords, scalar_array=morph_dict)
+        self.assertGreater(len(res2["diffuse_events"]), 0)
+        self.assertEqual(len(res2["point_source_events"]), 1)
+
+    def test_map_parameters_consolidate_notes(self):
+        """Verify consolidate_notes groups duplicate MIDI notes per time slice."""
+        scalar = np.full((20, 20), 0.5, dtype=np.float32)
+        coords = generate_scan_path("horizontal_sweep", 20, 20, 2.0, num_steps=4, samples_per_step=50)
+
+        # Without consolidation: 4 * 50 = 200 events
+        res_raw = map_parameters(coords, scalar, consolidate_notes=False)
+        # With consolidation: at most unique scale notes per slice
+        res_cons = map_parameters(coords, scalar, consolidate_notes=True)
+
+        self.assertGreater(len(res_raw["diffuse_events"]), len(res_cons["diffuse_events"]))
+        self.assertGreater(len(res_cons["diffuse_events"]), 0)
+
+    def test_map_parameters_edge_cases_and_serialization(self):
+        """Verify edge cases: all-dark image, json serialization, and input validation."""
+        import json
+
+        w, h = 20, 20
+        coords = generate_scan_path("horizontal_sweep", w, h, 2.0, num_steps=3, samples_per_step=3)
+
+        # 1. All-dark image below noise floor (e.g. 0.05 < 0.10)
+        dark_img = np.full((h, w), 0.05, dtype=np.float32)
+        res_dark = map_parameters(coords, dark_img, noise_floor=0.10)
+        self.assertEqual(len(res_dark["diffuse_events"]), 0)
+        self.assertEqual(len(res_dark), 0)
+
+        # 2. JSON serialization of AudioEventList directly and to_dict()
+        bright_img = np.full((h, w), 0.5, dtype=np.float32)
+        pt = [{"center_x": 10.0, "center_y": 10.0, "peak_flux": 0.9, "area": 5.0}]
+        res = map_parameters(coords, bright_img, point_sources=pt)
+
+        json_str_list = json.dumps(res)
+        self.assertIsInstance(json_str_list, str)
+        parsed_list = json.loads(json_str_list)
+        self.assertEqual(len(parsed_list), len(res))
+
+        json_str_dict = json.dumps(res.to_dict())
+        self.assertIsInstance(json_str_dict, str)
+        parsed_dict = json.loads(json_str_dict)
+        self.assertIn("events", parsed_dict)
+        self.assertIn("diffuse_events", parsed_dict)
+        self.assertIn("point_source_events", parsed_dict)
+        self.assertIn("metadata", parsed_dict)
+
+        # 3. Input validation errors
+        with self.assertRaises(ValueError):
+            map_parameters(np.array([1, 2]), bright_img)  # 1D scan path
+        with self.assertRaises(ValueError):
+            map_parameters(coords, "not_an_array")  # Invalid scalar array
+        with self.assertRaises(ValueError):
+            map_parameters(coords, bright_img, scale_name="invalid_scale")
+
+    def test_infer_scan_geometry(self):
+        """Verify automatic geometry inference from scan paths."""
+        w, h = 30, 30
+        h_path = generate_scan_path("horizontal_sweep", w, h, 2.0)
+        v_path = generate_scan_path("vertical_sweep", w, h, 2.0)
+        r_path = generate_scan_path("radar_sweep", w, h, 2.0)
+        rad_path = generate_scan_path("radial_expansion", w, h, 2.0)
+
+        self.assertEqual(infer_scan_geometry(h_path, w, h), ScanGeometry.HORIZONTAL_SWEEP)
+        self.assertEqual(infer_scan_geometry(v_path, w, h), ScanGeometry.VERTICAL_SWEEP)
+        self.assertEqual(infer_scan_geometry(r_path, w, h), ScanGeometry.RADAR_SWEEP)
+        self.assertEqual(infer_scan_geometry(rad_path, w, h), ScanGeometry.RADIAL_EXPANSION)
+
+    def test_non_western_and_modal_scales(self):
+        """Verify non-Western and modal scales (Hirajoshi, In Sen, Pelog, Slendro, Dorian)."""
+        test_freq = 440.0  # A4 = MIDI 69
+        for scale in ["hirajoshi", "in_sen", "pelog", "slendro", "dorian", "mixolydian"]:
+            q_freq, q_midi = quantize_to_scale(test_freq, scale_name=scale)
+            self.assertIsInstance(q_freq, float)
+            self.assertIsInstance(q_midi, float)
+            self.assertGreater(q_freq, 0.0)
 
 
 if __name__ == "__main__":
