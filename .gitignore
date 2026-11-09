@@ -1,0 +1,14 @@
+# agyq runtime state, queues, cache, and logs
+.agyq/
+queue.md
+QUEUE.md
+queue.*.md
+*.queue.md
+.queue.md
+agyq.json
+agyq.local.json
+*.agyq.json
+errors.log
+*.log
+.cache/
+*.cache
