@@ -136,6 +136,144 @@ class TestFrontendStructure(unittest.TestCase):
         self.assertIn("drawScanHead", js)
         self.assertIn("horizontal_sweep", js)
 
+    def test_load_timeline_function(self):
+        """Task 14.1: Write loadTimeline(jsonUrl) to fetch and parse the JSON timeline."""
+        js = self.script_js_path.read_text(encoding="utf-8")
+        self.assertTrue(
+            re.search(r"async\s+function\s+loadTimeline\s*\(\s*jsonUrl\s*\)", js) or
+            re.search(r"function\s+loadTimeline\s*\(\s*jsonUrl\s*\)", js),
+            "loadTimeline(jsonUrl) function missing in script.js",
+        )
+        self.assertIn("fetch(jsonUrl)", js)
+        self.assertIn(".json()", js)
+
+    def test_tone_part_scheduling(self):
+        """Task 14.2: Use Tone.js Part or Sequence to schedule the events with precise timing."""
+        js = self.script_js_path.read_text(encoding="utf-8")
+        self.assertTrue(
+            "new Tone.Part" in js or "new Tone.Sequence" in js,
+            "Tone.Part or Tone.Sequence scheduling missing in script.js",
+        )
+        self.assertIn("partEvents", js)
+        self.assertIn("triggerAudioEvent", js)
+
+    def test_instrument_id_synth_mapping(self):
+        """Task 14.3: Map instrumentId from JSON to Tone.js synths (Tone.PolySynth for diffuse, Tone.PluckSynth for point sources)."""
+        js = self.script_js_path.read_text(encoding="utf-8")
+        self.assertIn("Tone.PolySynth", js, "Tone.PolySynth missing in script.js")
+        self.assertIn("Tone.PluckSynth", js, "Tone.PluckSynth missing in script.js")
+        self.assertIn("getSynthForInstrument", js, "getSynthForInstrument mapping function missing in script.js")
+        self.assertIn("diffuse_pad", js, "diffuse_pad mapping missing in script.js")
+        self.assertIn("point_source_pluck", js, "point_source_pluck mapping missing in script.js")
+
+    def test_scanhead_sync_with_transport_clock(self):
+        """Task 14.4: Ensure p5.js canvas visualizes scan head moving in exact sync with Tone.Transport clock."""
+        js = self.script_js_path.read_text(encoding="utf-8")
+        self.assertIn("Tone.Transport.seconds", js, "Tone.Transport.seconds sync missing in script.js")
+        self.assertIn("drawScanHead", js, "drawScanHead function missing in script.js")
+        self.assertIn("normProgress", js, "normProgress computation missing in script.js")
+
+    def test_node_load_timeline_execution(self):
+        """Task 14 integration: Evaluate script.js in Node.js with Tone and p5 mocks to verify end-to-end loadTimeline behavior."""
+        node_script = """
+const fs = require('fs');
+const vm = require('vm');
+
+let scheduledPartEvents = null;
+let partStarted = false;
+
+const sandbox = {
+  window: {},
+  document: {
+    getElementById: () => ({
+      addEventListener: () => {},
+      classList: { add: () => {}, remove: () => {} },
+      style: {},
+      textContent: ''
+    }),
+    querySelectorAll: () => []
+  },
+  console: console,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  fetch: async (url) => {
+    if (url === 'frontend/sample_blueprint.json' || url === 'sample_blueprint.json') {
+      const data = JSON.parse(fs.readFileSync('frontend/sample_blueprint.json', 'utf8'));
+      return { ok: true, status: 200, json: async () => data };
+    }
+    throw new Error('404: ' + url);
+  },
+  Tone: {
+    Volume: function() { this.chain = () => {}; this.connect = () => this; this.volume = { value: 0 }; },
+    Limiter: function() {},
+    Reverb: function() { this.wet = { value: 0 }; },
+    Panner: function() { this.connect = () => this; this.pan = { setValueAtTime: () => {} }; },
+    PolySynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = () => {};
+      this.releaseAll = () => {};
+    },
+    PluckSynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = () => {};
+      this.triggerAttack = () => {};
+      this.triggerRelease = () => {};
+    },
+    Synth: function() {},
+    Destination: {},
+    Frequency: () => ({ toFrequency: () => 440 }),
+    Transport: {
+      bpm: { value: 120 },
+      seconds: 0,
+      start: () => {},
+      pause: () => {},
+      stop: () => {},
+      cancel: () => {},
+      schedule: () => {}
+    },
+    Part: function(cb, events) {
+      this.events = events;
+      scheduledPartEvents = events;
+      this.start = () => { partStarted = true; };
+      this.dispose = () => {};
+    },
+    Draw: { schedule: (fn) => fn() },
+    context: { state: 'running' }
+  },
+  p5: function() {}
+};
+sandbox.window.addEventListener = () => {};
+
+const script = fs.readFileSync('frontend/script.js', 'utf8');
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+
+sandbox.window.loadTimeline('frontend/sample_blueprint.json').then((bp) => {
+  if (!bp || !Array.isArray(bp.events)) process.exit(1);
+  if (!scheduledPartEvents || scheduledPartEvents.length !== bp.events.length) process.exit(2);
+  if (!partStarted) process.exit(3);
+
+  const diffSynth = sandbox.window.getSynthForInstrument('diffuse_pad', 'diffuse');
+  const pluckSynth = sandbox.window.getSynthForInstrument('point_source_pluck', 'point_source');
+  if (!diffSynth || !pluckSynth) process.exit(4);
+  if (diffSynth === pluckSynth) process.exit(5);
+
+  process.exit(0);
+}).catch((err) => {
+  console.error(err);
+  process.exit(10);
+});
+"""
+        res = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, f"Node execution error: {res.stderr}\n{res.stdout}")
+
     def test_sample_blueprint_validity(self):
         """Verify sample blueprint JSON contains expected NASA EIC sonification schema."""
         self.assertTrue(self.sample_blueprint_path.exists())

@@ -49,9 +49,69 @@ let masterLimiter;
 let spaceReverb;
 let diffuseSynth;
 let pointSynth;
+let pluckSynth;
 let diffusePanner;
 let pointPanner;
 let audioInitialized = false;
+let synthMap = {};
+
+/**
+ * Initialize instrument mapping registry connecting instrumentIds to Tone.js synths.
+ */
+function initInstrumentMap() {
+  synthMap = {
+    // Diffuse emission layers -> Tone.PolySynth
+    "diffuse_pad": diffuseSynth,
+    "diffuse": diffuseSynth,
+    "diffuse_synth": diffuseSynth,
+    "pad": diffuseSynth,
+    "ambient_pad": diffuseSynth,
+    "ambient": diffuseSynth,
+
+    // Point source transients -> Tone.PluckSynth
+    "point_source_pluck": pluckSynth,
+    "pluck": pluckSynth,
+    "point_source": pluckSynth,
+    "point": pluckSynth,
+    "hotspot": pluckSynth,
+    "ping": pluckSynth,
+    "bell": pluckSynth,
+    "chime": pluckSynth,
+    "crackle": pluckSynth,
+    "whoosh": pluckSynth,
+  };
+}
+
+/**
+ * Map an instrumentId and layer type to a specific Tone.js synth.
+ * 
+ * @param {string} instrumentId - Identifier from JSON event (e.g. "diffuse_pad", "point_source_pluck")
+ * @param {string} [layer] - Event layer ("diffuse" | "point_source")
+ * @returns {Tone.Instrument} Tone.js synth instance
+ */
+function getSynthForInstrument(instrumentId, layer) {
+  if (instrumentId && synthMap[instrumentId]) {
+    return synthMap[instrumentId];
+  }
+  const idStr = String(instrumentId || "").toLowerCase();
+  const layerStr = String(layer || "").toLowerCase();
+
+  if (
+    idStr.includes("pluck") ||
+    idStr.includes("point") ||
+    idStr.includes("ping") ||
+    idStr.includes("bell") ||
+    idStr.includes("chime") ||
+    idStr.includes("hotspot") ||
+    idStr.includes("crackle") ||
+    layerStr === "point_source"
+  ) {
+    return pluckSynth || pointSynth;
+  }
+
+  // Default to diffuse polyphonic synth
+  return diffuseSynth;
+}
 
 /**
  * Initialize Tone.js audio graph and routing.
@@ -77,7 +137,7 @@ function initAudioEngine() {
     diffusePanner = new Tone.Panner(0).connect(masterVolume);
     pointPanner = new Tone.Panner(0).connect(masterVolume);
 
-    // 4. Diffuse Emission Layer Synth (Polyphonic warm analog pad)
+    // 4. Diffuse Emission Layer Synth (Tone.PolySynth warm analog pad)
     diffuseSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: {
         type: "sawtooth6",
@@ -92,7 +152,17 @@ function initAudioEngine() {
     diffuseSynth.volume.value = -3;
     diffuseSynth.connect(diffusePanner);
 
-    // 5. Point Source Layer Synth (Snappy plucked transient)
+    // 5. Point Source Layer Synth (Tone.PluckSynth - Karplus-Strong physical modeling pluck)
+    pluckSynth = new Tone.PluckSynth({
+      attackNoise: 1.0,
+      dampening: 4000,
+      resonance: 0.92,
+      release: 0.4,
+    });
+    pluckSynth.volume.value = 0;
+    pluckSynth.connect(pointPanner);
+
+    // 6. Point Source Polyphonic Synth (Transient triangle/sine voice)
     pointSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: {
         type: "triangle",
@@ -107,7 +177,10 @@ function initAudioEngine() {
     pointSynth.volume.value = 0;
     pointSynth.connect(pointPanner);
 
-    // 6. Transport configuration
+    // 7. Register instrument map connecting JSON instrumentIds to synths
+    initInstrumentMap();
+
+    // 8. Transport configuration
     Tone.Transport.loop = false;
     Tone.Transport.bpm.value = 120;
 
@@ -135,38 +208,75 @@ async function ensureAudioContext() {
 
 /**
  * Trigger an audio event scheduled in the blueprint timeline.
+ * Maps instrumentId to designated Tone.js synths with spatial panning and velocity.
+ * 
+ * @param {number} time - Audio context scheduling time in seconds
+ * @param {Object} ev - Blueprint event payload
  */
 function triggerAudioEvent(time, ev) {
   try {
-    const pitch = ev.frequency || ev.pitch || 440;
-    const durSec = ev.durationSeconds || (ev.duration ? ev.duration / 1000 : 0.2);
-    const vel = typeof ev.velocity === "number" ? Math.max(0.05, Math.min(1.0, ev.velocity)) : 0.7;
-    const pan = typeof ev.pan === "number" ? Math.max(-1.0, Math.min(1.0, ev.pan)) : 0.0;
-
+    const synth = getSynthForInstrument(ev.instrumentId, ev.layer);
     const isPointSource =
-      ev.instrumentId &&
-      (ev.instrumentId.includes("point") ||
-       ev.instrumentId.includes("pluck") ||
-       ev.instrumentId.includes("ping") ||
-       ev.instrumentId.includes("hotspot") ||
-       ev.layer === "point_source");
+      synth === pluckSynth ||
+      synth === pointSynth ||
+      (ev.layer === "point_source") ||
+      (ev.instrumentId && (
+        ev.instrumentId.includes("point") ||
+        ev.instrumentId.includes("pluck") ||
+        ev.instrumentId.includes("ping") ||
+        ev.instrumentId.includes("hotspot")
+      ));
 
-    if (isPointSource) {
-      if (pointPanner && pointPanner.pan) {
-        pointPanner.pan.setValueAtTime(pan, time);
+    // Resolve pitch / frequency
+    let pitch = ev.frequency || ev.pitch;
+    if (!pitch) {
+      if (typeof ev.midiNote === "number") {
+        pitch = (Tone.Frequency ? Tone.Frequency(ev.midiNote, "midi").toFrequency() : 440);
+      } else if (typeof ev.midi_note === "number") {
+        pitch = (Tone.Frequency ? Tone.Frequency(ev.midi_note, "midi").toFrequency() : 440);
+      } else {
+        pitch = 440;
       }
-      pointSynth.triggerAttackRelease(pitch, durSec, time, vel);
-      flashVoiceIndicator("point");
-    } else {
-      if (diffusePanner && diffusePanner.pan) {
-        diffusePanner.pan.setValueAtTime(pan, time);
-      }
-      diffuseSynth.triggerAttackRelease(pitch, durSec, time, vel);
-      flashVoiceIndicator("diffuse");
     }
 
-    // Schedule visual acoustic ripple pulse on the p5 canvas
-    if (state.showPulses) {
+    // Resolve duration in seconds
+    const durSec = ev.durationSeconds ||
+      ev.duration_seconds ||
+      (typeof ev.duration_ms === "number" ? ev.duration_ms / 1000.0 : null) ||
+      (typeof ev.duration === "number" ? (ev.duration > 20 ? ev.duration / 1000.0 : ev.duration) : 0.2);
+
+    // Resolve velocity / amplitude
+    const vel = typeof ev.velocity === "number"
+      ? Math.max(0.05, Math.min(1.0, ev.velocity))
+      : (typeof ev.amplitude === "number" ? Math.max(0.05, Math.min(1.0, ev.amplitude)) : 0.7);
+
+    // Resolve stereo pan [-1.0 .. 1.0]
+    const pan = typeof ev.pan === "number" ? Math.max(-1.0, Math.min(1.0, ev.pan)) : 0.0;
+
+    // Apply stereo panner values aligned with audio timestamp
+    if (isPointSource) {
+      if (pointPanner && pointPanner.pan && typeof pointPanner.pan.setValueAtTime === "function") {
+        pointPanner.pan.setValueAtTime(pan, time);
+      }
+    } else {
+      if (diffusePanner && diffusePanner.pan && typeof diffusePanner.pan.setValueAtTime === "function") {
+        diffusePanner.pan.setValueAtTime(pan, time);
+      }
+    }
+
+    // Trigger synthesis on the mapped synth with sub-millisecond precision
+    if (synth) {
+      if (typeof synth.triggerAttackRelease === "function") {
+        synth.triggerAttackRelease(pitch, durSec, time, vel);
+      } else if (typeof synth.triggerAttack === "function") {
+        synth.triggerAttack(pitch, time, vel);
+      }
+    }
+
+    flashVoiceIndicator(isPointSource ? "point" : "diffuse");
+
+    // Schedule visual acoustic ripple pulse on the p5 canvas synchronized with audio clock
+    if (state.showPulses && Tone.Draw && typeof Tone.Draw.schedule === "function") {
       Tone.Draw.schedule(() => {
         spawnEventPulse(ev);
       }, time);
@@ -190,37 +300,60 @@ function flashVoiceIndicator(type) {
 }
 
 /**
- * Schedule blueprint events onto Tone.Transport using Tone.Part.
+ * Schedule blueprint timeline events onto Tone.Transport using Tone.Part.
+ * 
+ * @param {Object} blueprint - JSON blueprint object containing metadata and events array
+ * @returns {Tone.Part} The scheduled Tone.Part instance
  */
-function scheduleBlueprint(blueprint) {
+function scheduleTimeline(blueprint) {
   initAudioEngine();
 
   // Clear previous schedule
   if (state.scheduledPart) {
-    state.scheduledPart.dispose();
+    try {
+      state.scheduledPart.dispose();
+    } catch (_) {}
     state.scheduledPart = null;
   }
   Tone.Transport.cancel();
 
   state.blueprint = blueprint;
   const meta = blueprint.metadata || {};
-  state.events = blueprint.events || [];
-  state.durationSeconds = meta.durationSeconds || meta.duration_seconds || 5.0;
-  state.scanGeometry = meta.scanGeometry || meta.scan_geometry || "horizontal_sweep";
+  state.events = Array.isArray(blueprint.events) ? blueprint.events : [];
+  state.durationSeconds =
+    meta.durationSeconds ||
+    meta.duration_seconds ||
+    (meta.durationMs ? meta.durationMs / 1000.0 : null) ||
+    (meta.duration_ms ? meta.duration_ms / 1000.0 : null) ||
+    5.0;
+  state.scanGeometry = meta.scanGeometry || meta.scan_geometry || meta.geometry_type || "horizontal_sweep";
   state.scaleName = meta.scaleName || meta.scale_name || "c_major_pentatonic";
   state.tuningSystem = meta.tuningSystem || meta.tuning_system || "12-EDO";
 
-  // Format events for Tone.Part
+  Tone.Transport.loop = false;
+  Tone.Transport.loopEnd = state.durationSeconds;
+
+  // Format events for Tone.Part: array of [timeInSeconds, eventObject]
   const partEvents = state.events.map((ev) => {
     let tSec = 0;
     if (typeof ev.timeSeconds === "number") {
       tSec = ev.timeSeconds;
+    } else if (typeof ev.time_seconds === "number") {
+      tSec = ev.time_seconds;
+    } else if (typeof ev.time_ms === "number") {
+      tSec = ev.time_ms / 1000.0;
     } else if (typeof ev.time === "number") {
-      tSec = ev.time / 1000.0;
+      // Milliseconds vs seconds detection: if time exceeds duration or > 100, normalize ms
+      if (ev.time > (state.durationSeconds || 30) && ev.time > 100) {
+        tSec = ev.time / 1000.0;
+      } else {
+        tSec = ev.time;
+      }
     }
-    return [tSec, ev];
+    return [Math.max(0, tSec), ev];
   });
 
+  // Use Tone.Part to schedule events with sub-millisecond precision
   state.scheduledPart = new Tone.Part((time, ev) => {
     triggerAudioEvent(time, ev);
   }, partEvents);
@@ -230,15 +363,59 @@ function scheduleBlueprint(blueprint) {
 
   // Schedule auto-stop when duration finishes
   Tone.Transport.schedule((time) => {
-    Tone.Draw.schedule(() => {
+    if (Tone.Draw && typeof Tone.Draw.schedule === "function") {
+      Tone.Draw.schedule(() => {
+        stopPlayback();
+      }, time);
+    } else {
       stopPlayback();
-    }, time);
+    }
   }, state.durationSeconds);
 
   state.isLoaded = true;
   updateMetadataUI();
   updatePlaybackUI();
   console.log(`[Earth Jukebox] Scheduled ${state.events.length} events for ${state.durationSeconds}s playback.`);
+  return state.scheduledPart;
+}
+
+// Backwards-compatible alias
+const scheduleBlueprint = scheduleTimeline;
+
+/**
+ * Fetch and parse a timeline JSON from a URL or object, then schedule it for audio-visual playback.
+ * 
+ * @param {string|Object} jsonUrl - Remote/local URL string, or parsed blueprint object
+ * @returns {Promise<Object>} Resolves with the parsed timeline blueprint
+ */
+async function loadTimeline(jsonUrl) {
+  let blueprint;
+
+  if (typeof jsonUrl === "string") {
+    const response = await fetch(jsonUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load timeline from "${jsonUrl}": HTTP ${response.status} ${response.statusText}`);
+    }
+    blueprint = await response.json();
+  } else if (typeof jsonUrl === "object" && jsonUrl !== null) {
+    blueprint = jsonUrl;
+  } else {
+    throw new TypeError(`loadTimeline expected a URL string or object, but got ${typeof jsonUrl}`);
+  }
+
+  if (!blueprint || !Array.isArray(blueprint.events)) {
+    throw new Error("Invalid timeline format: missing 'events' array in JSON blueprint.");
+  }
+
+  // Stop any active playback before scheduling new timeline
+  stopPlayback();
+
+  // Schedule onto Tone.Transport and Tone.Part
+  scheduleTimeline(blueprint);
+
+  state.timelineUrl = typeof jsonUrl === "string" ? jsonUrl : null;
+  console.log(`[Earth Jukebox] Successfully loaded timeline with ${blueprint.events.length} events.`);
+  return blueprint;
 }
 
 // ============================================================================
@@ -291,11 +468,20 @@ function seekPlayback(targetSeconds) {
 }
 
 function silenceActiveVoices() {
-  if (diffuseSynth) {
+  if (diffuseSynth && typeof diffuseSynth.releaseAll === "function") {
     try { diffuseSynth.releaseAll(); } catch (_) {}
   }
-  if (pointSynth) {
+  if (pointSynth && typeof pointSynth.releaseAll === "function") {
     try { pointSynth.releaseAll(); } catch (_) {}
+  }
+  if (pluckSynth) {
+    try {
+      if (typeof pluckSynth.releaseAll === "function") {
+        pluckSynth.releaseAll();
+      } else if (typeof pluckSynth.triggerRelease === "function") {
+        pluckSynth.triggerRelease();
+      }
+    } catch (_) {}
   }
 }
 
@@ -397,11 +583,16 @@ const sketch = (p) => {
       drawGridOverlay(p);
     }
 
-    // 3. Compute Playhead Position & Time
+    // 3. Compute Playhead Position & Time directly synchronized with Tone.Transport clock
     if (audioInitialized && (state.isPlaying || state.isPaused)) {
       state.currentTime = Tone.Transport.seconds;
+      if (state.currentTime >= state.durationSeconds && state.isPlaying) {
+        stopPlayback();
+      }
     }
-    const normProgress = Math.max(0, Math.min(1.0, state.currentTime / state.durationSeconds));
+    const normProgress = state.durationSeconds > 0
+      ? Math.max(0, Math.min(1.0, state.currentTime / state.durationSeconds))
+      : 0;
     updateTimelineScrubber(normProgress);
 
     // 4. Render Active Event Ripples / Acoustic Pulses
@@ -822,14 +1013,13 @@ function updateMetadataUI() {
  */
 function handleJsonFileUpload(file) {
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const parsed = JSON.parse(e.target.result);
       if (!parsed.events || !Array.isArray(parsed.events)) {
         throw new Error("Invalid blueprint format: missing 'events' array.");
       }
-      stopPlayback();
-      scheduleBlueprint(parsed);
+      await loadTimeline(parsed);
       console.log(`[Earth Jukebox] Successfully loaded JSON: ${file.name}`);
     } catch (err) {
       alert(`Failed to parse blueprint JSON: ${err.message}`);
@@ -844,10 +1034,7 @@ function handleJsonFileUpload(file) {
  */
 async function loadDefaultDemoBlueprint() {
   try {
-    const res = await fetch("sample_blueprint.json");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    scheduleBlueprint(data);
+    return await loadTimeline("sample_blueprint.json");
   } catch (err) {
     console.warn("[Earth Jukebox] Could not fetch sample_blueprint.json; generating algorithmic blueprint:", err);
     // Fallback: Generate demo blueprint algorithmically
@@ -1078,3 +1265,33 @@ window.addEventListener("DOMContentLoaded", () => {
   // Auto-load default demo blueprint
   loadDefaultDemoBlueprint();
 });
+
+// ============================================================================
+// 8. Global Module & Window Exports
+// ============================================================================
+
+if (typeof window !== "undefined") {
+  window.loadTimeline = loadTimeline;
+  window.scheduleTimeline = scheduleTimeline;
+  window.scheduleBlueprint = scheduleBlueprint;
+  window.getSynthForInstrument = getSynthForInstrument;
+  window.playPlayback = playPlayback;
+  window.pausePlayback = pausePlayback;
+  window.stopPlayback = stopPlayback;
+  window.seekPlayback = seekPlayback;
+  window.state = state;
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    loadTimeline,
+    scheduleTimeline,
+    scheduleBlueprint,
+    getSynthForInstrument,
+    playPlayback,
+    pausePlayback,
+    stopPlayback,
+    seekPlayback,
+    state,
+  };
+}
