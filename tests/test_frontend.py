@@ -285,6 +285,325 @@ sandbox.window.loadTimeline('frontend/sample_blueprint.json').then((bp) => {
         self.assertGreater(len(blueprint["events"]), 0)
         self.assertIn("scanGeometry", blueprint["metadata"])
 
+    def test_sample_scalar_data_validity(self):
+        """Verify sample secondary scalar dataset JSON exists and matches 2D quantitative schema."""
+        sample_scalar_path = FRONTEND_DIR / "sample_scalar_data.json"
+        self.assertTrue(sample_scalar_path.exists(), "frontend/sample_scalar_data.json is missing")
+        with open(sample_scalar_path, "r", encoding="utf-8") as f:
+            scalar_data = json.load(f)
+
+        self.assertIn("metadata", scalar_data)
+        self.assertIn("width", scalar_data)
+        self.assertIn("height", scalar_data)
+        self.assertIn("data", scalar_data)
+        self.assertEqual(len(scalar_data["data"]), scalar_data["height"])
+        self.assertEqual(len(scalar_data["data"][0]), scalar_data["width"])
+        self.assertGreaterEqual(scalar_data["metadata"]["minValue"], 0.0)
+        self.assertLessEqual(scalar_data["metadata"]["maxValue"], 1.0)
+
+    def test_spatial_audio_cursor_static_definitions(self):
+        """Task 15: Verify script.js and index.html implement the 4 core spatial cursor tasks."""
+        html = self.index_html_path.read_text(encoding="utf-8")
+        js = self.script_js_path.read_text(encoding="utf-8")
+
+        # 1. Track mousemove events over canvas
+        self.assertIn("mousemove", js, "mousemove event tracking missing in script.js")
+        self.assertIn("handleCanvasMouseMove", js, "handleCanvasMouseMove missing in script.js")
+        self.assertIn("chk-spatial-cursor", html, "Spatial cursor checkbox missing in index.html")
+
+        # 2. Map mouse (x, y) to underlying data array (secondary JSON load)
+        self.assertIn("loadScalarData", js, "loadScalarData function missing in script.js")
+        self.assertIn("getScalarAt", js, "getScalarAt function missing in script.js")
+        self.assertIn("btn-load-scalar", html, "Load scalar button missing in index.html")
+
+        # 3. Create short earcon sound that triggers on hover
+        self.assertIn("triggerHoverEarcon", js, "triggerHoverEarcon function missing in script.js")
+        self.assertIn("activeEarconPings", js, "activeEarconPings reticle visual missing in script.js")
+
+        # 4. Use Tone.js Panner3D or native Web Audio PannerNode for 3D positioning
+        self.assertIn("Tone.Panner3D", js, "Tone.Panner3D integration missing in script.js")
+        self.assertIn("createPanner", js, "Native Web Audio createPanner integration missing in script.js")
+        self.assertIn("updateSpatialAudioPosition", js, "updateSpatialAudioPosition missing in script.js")
+
+    def test_node_spatial_audio_cursor_with_tone_panner3d(self):
+        """Task 15 Node integration: Verify Tone.Panner3D 3D positioning, scalar mapping, and hover earcon."""
+        node_test = """
+const fs = require('fs');
+const vm = require('vm');
+
+let pannerPositions = [];
+let earconAttacks = [];
+
+const mockAudioParam = (initVal = 0) => {
+  let v = initVal;
+  return {
+    value: v,
+    setValueAtTime: (newV, time) => {
+      v = newV;
+      pannerPositions.push({ val: newV, time: time });
+    }
+  };
+};
+
+const sandbox = {
+  window: {},
+  document: {
+    getElementById: () => ({
+      addEventListener: () => {},
+      classList: { add: () => {}, remove: () => {} },
+      style: {},
+      textContent: ''
+    }),
+    querySelectorAll: () => []
+  },
+  console: console,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  performance: { now: () => Date.now() },
+  fetch: async (url) => {
+    if (url === 'frontend/sample_scalar_data.json' || url === 'sample_scalar_data.json') {
+      const data = JSON.parse(fs.readFileSync('frontend/sample_scalar_data.json', 'utf8'));
+      return { ok: true, status: 200, json: async () => data };
+    }
+    throw new Error('404: ' + url);
+  },
+  Tone: {
+    Volume: function() { this.chain = () => {}; this.connect = () => this; this.volume = { value: 0 }; },
+    Limiter: function() {},
+    Reverb: function() { this.wet = { value: 0 }; },
+    Panner: function() { this.connect = () => this; this.pan = { setValueAtTime: () => {} }; },
+    Panner3D: function(opts = {}) {
+      this.panningModel = opts.panningModel || 'HRTF';
+      this.distanceModel = opts.distanceModel || 'inverse';
+      this.positionX = mockAudioParam(opts.positionX || 0);
+      this.positionY = mockAudioParam(opts.positionY || 0);
+      this.positionZ = mockAudioParam(opts.positionZ || -1.5);
+      this.connect = () => this;
+    },
+    PolySynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = (freq, dur, time, vel) => {
+        earconAttacks.push({ freq, dur, time, vel });
+      };
+      this.releaseAll = () => {};
+    },
+    PluckSynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = () => {};
+      this.releaseAll = () => {};
+    },
+    Synth: function() {
+      this.connect = () => this;
+      this.triggerAttackRelease = (freq, dur, time, vel) => {
+        earconAttacks.push({ freq, dur, time, vel });
+      };
+    },
+    Destination: {},
+    Frequency: () => ({ toFrequency: () => 440 }),
+    Transport: {
+      bpm: { value: 120 },
+      seconds: 0,
+      start: () => {},
+      pause: () => {},
+      stop: () => {},
+      cancel: () => {},
+      schedule: () => {}
+    },
+    Part: function(cb, events) {
+      this.start = () => {};
+      this.dispose = () => {};
+    },
+    Draw: { schedule: (fn) => fn() },
+    now: () => 1.25,
+    context: { state: 'running' }
+  },
+  p5: function() {}
+};
+sandbox.window.addEventListener = () => {};
+
+const script = fs.readFileSync('frontend/script.js', 'utf8');
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+
+// Test 1: Load secondary scalar data
+const customData = {
+  width: 4,
+  height: 3,
+  data: [
+    [0.1, 0.2, 0.3, 0.4],
+    [0.5, 0.6, 0.7, 0.8],
+    [0.9, 0.95, 0.98, 1.0]
+  ]
+};
+
+sandbox.window.loadScalarData(customData).then((ds) => {
+  if (!ds || ds.width !== 4 || ds.height !== 3) process.exit(1);
+
+  // Test 2: Map canvas (x, y) to underlying data
+  // Middle of data area
+  const probe = sandbox.window.getScalarAt(200, 150);
+  if (typeof probe.scalar !== 'number' || probe.scalar < 0 || probe.scalar > 1) process.exit(2);
+
+  // Test 3: 3D spatial acoustic positioning
+  // normX = 0 (far left), normY = 0 (top)
+  const posLeftTop = sandbox.window.updateSpatialAudioPosition(0.0, 0.0, 0.5);
+  if (posLeftTop.x >= 0) process.exit(3); // Left must be negative X
+  if (posLeftTop.y <= 0) process.exit(4); // Top must be positive Y
+  if (posLeftTop.z >= 0) process.exit(5); // In front of listener: negative Z
+
+  // normX = 1.0 (far right), normY = 1.0 (bottom)
+  const posRightBottom = sandbox.window.updateSpatialAudioPosition(1.0, 1.0, 0.5);
+  if (posRightBottom.x <= 0) process.exit(6); // Right must be positive X
+  if (posRightBottom.y >= 0) process.exit(7); // Bottom must be negative Y
+
+  // Test 4: Trigger hover earcon
+  earconAttacks = [];
+  const triggered = sandbox.window.triggerHoverEarcon(0.85, 0.75, 0.25);
+  if (!triggered) process.exit(8);
+  if (earconAttacks.length === 0) process.exit(9);
+  const earcon = earconAttacks[0];
+  if (typeof earcon.freq !== 'number' || earcon.freq < 200) process.exit(10);
+  if (earcon.vel <= 0) process.exit(11);
+
+  // Test 5: Canvas mousemove tracking
+  const mockCanvas = {
+    width: 800,
+    height: 500,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 500 })
+  };
+  const mouseEvent = { clientX: 400, clientY: 250 };
+  sandbox.window.handleCanvasMouseMove(mouseEvent, null, mockCanvas);
+  const state = sandbox.window.spatialCursorState;
+  if (!state.isHovering || state.canvasX !== 400 || state.canvasY !== 250) process.exit(12);
+
+  process.exit(0);
+}).catch((err) => {
+  console.error(err);
+  process.exit(20);
+});
+"""
+        res = subprocess.run(
+            ["node", "-e", node_test],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, f"Node Tone.Panner3D test error: {res.stderr}\n{res.stdout}")
+
+    def test_node_spatial_audio_cursor_with_native_web_audio_panner(self):
+        """Task 15 Node integration: Verify fallback to native Web Audio PannerNode."""
+        node_test = """
+const fs = require('fs');
+const vm = require('vm');
+
+let nativePannerCreated = false;
+let nativePositions = [];
+
+const mockAudioParam = (initVal = 0) => {
+  let v = initVal;
+  return {
+    value: v,
+    setValueAtTime: (newV, time) => {
+      v = newV;
+      nativePositions.push({ val: newV, time: time });
+    }
+  };
+};
+
+const sandbox = {
+  window: {},
+  document: {
+    getElementById: () => ({
+      addEventListener: () => {},
+      classList: { add: () => {}, remove: () => {} },
+      style: {},
+      textContent: ''
+    }),
+    querySelectorAll: () => []
+  },
+  console: console,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  performance: { now: () => Date.now() },
+  fetch: async () => ({
+    ok: true,
+    json: async () => ({ width: 2, height: 2, data: [[0.2, 0.4], [0.6, 0.8]] })
+  }),
+  Tone: {
+    Volume: function() { this.chain = () => {}; this.connect = () => this; this.volume = { value: 0 }; },
+    Limiter: function() {},
+    Reverb: function() { this.wet = { value: 0 }; },
+    Panner: function() { this.connect = () => this; this.pan = { setValueAtTime: () => {} }; },
+    PolySynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = () => {};
+      this.releaseAll = () => {};
+    },
+    PluckSynth: function() {
+      this.connect = () => this;
+      this.volume = { value: 0 };
+      this.triggerAttackRelease = () => {};
+      this.releaseAll = () => {};
+    },
+    Synth: function() { this.connect = () => this; this.triggerAttackRelease = () => {}; },
+    Destination: {},
+    Frequency: () => ({ toFrequency: () => 440 }),
+    Transport: {
+      bpm: { value: 120 },
+      seconds: 0,
+      start: () => {},
+      pause: () => {},
+      stop: () => {},
+      cancel: () => {},
+      schedule: () => {}
+    },
+    Part: function() { this.start = () => {}; this.dispose = () => {}; },
+    Draw: { schedule: (fn) => fn() },
+    now: () => 2.0,
+    context: {
+      state: 'running',
+      createPanner: () => {
+        nativePannerCreated = true;
+        return {
+          panningModel: 'HRTF',
+          distanceModel: 'inverse',
+          positionX: mockAudioParam(0),
+          positionY: mockAudioParam(0),
+          positionZ: mockAudioParam(-1.5),
+          connect: () => {}
+        };
+      }
+    }
+  },
+  p5: function() {}
+};
+sandbox.window.addEventListener = () => {};
+
+const script = fs.readFileSync('frontend/script.js', 'utf8');
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+
+const audioObjs = sandbox.window.initSpatialCursorAudio();
+if (!audioObjs || !audioObjs.panner) process.exit(1);
+if (!nativePannerCreated) process.exit(2);
+
+sandbox.window.updateSpatialAudioPosition(0.8, 0.2, 0.7);
+if (nativePositions.length === 0) process.exit(3);
+
+process.exit(0);
+"""
+        res = subprocess.run(
+            ["node", "-e", node_test],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, f"Node native PannerNode test error: {res.stderr}\n{res.stdout}")
+
+
 
 if __name__ == "__main__":
     unittest.main()

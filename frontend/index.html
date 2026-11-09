@@ -229,6 +229,48 @@
             </label>
           </div>
         </div>
+
+        <!-- 5. Accessibility: Spatial Audio Cursor Exploration Tool (Task 15) -->
+        <div class="card panel-card a11y-card" id="a11y-cursor-card">
+          <h3 class="panel-section-title">
+            <span class="section-icon">🎧</span> Spatial Audio Cursor (A11y)
+          </h3>
+
+          <div class="toggle-group">
+            <label class="toggle-control">
+              <input type="checkbox" id="chk-spatial-cursor" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Enable 3D Audio Probe</span>
+            </label>
+          </div>
+
+          <div class="probe-telemetry-box">
+            <div class="telemetry-stat">
+              <span class="stat-label">Probed Scalar:</span>
+              <span class="stat-value highlight" id="telemetry-scalar">0.0000</span>
+            </div>
+            <div class="telemetry-stat">
+              <span class="stat-label">3D Position:</span>
+              <span class="stat-value" id="telemetry-3d-pos">[0.00, 0.00, -1.50]m</span>
+            </div>
+            <div class="telemetry-stat">
+              <span class="stat-label">Scalar Grid:</span>
+              <span class="stat-value" id="telemetry-grid-size">80 × 50</span>
+            </div>
+          </div>
+
+          <div class="secondary-data-actions">
+            <input type="file" id="scalar-file-input" accept=".json,application/json" class="file-input-hidden">
+            <button id="btn-load-scalar" class="btn btn-secondary btn-small" title="Load secondary raw scalar data JSON">
+              <span class="btn-icon">📊</span>
+              <span class="btn-label">Load Scalar JSON</span>
+            </button>
+            <button id="btn-load-sample-scalar" class="btn btn-small" title="Load sample NASA EIC scalar dataset">
+              <span class="btn-icon">✨</span>
+              <span class="btn-label">Sample Data</span>
+            </button>
+          </div>
+        </div>
       </aside>
     </main>
 

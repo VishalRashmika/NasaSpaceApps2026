@@ -728,3 +728,53 @@ body {
 .app-footer strong {
   color: var(--text-muted);
 }
+
+/* ==========================================================================
+   Accessibility: Spatial Audio Cursor & 3D Probe Controls (Task 15)
+   ========================================================================== */
+.a11y-card {
+  border-left: 3px solid var(--accent-cyan);
+}
+
+.probe-telemetry-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(10, 15, 29, 0.7);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.telemetry-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.telemetry-stat .stat-label {
+  color: var(--text-dim);
+}
+
+.telemetry-stat .stat-value {
+  color: var(--text-main);
+}
+
+.telemetry-stat .stat-value.highlight {
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.secondary-data-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.btn-small {
+  padding: 0.45rem 0.7rem;
+  font-size: 0.78rem;
+}
+

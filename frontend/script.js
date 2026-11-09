@@ -38,6 +38,24 @@ const state = {
   // Tone.js scheduling
   scheduledPart: null,
   activeVoicesCount: 0,
+
+  // 3D Spatial Audio Exploration Cursor (Task 15)
+  spatialCursor: {
+    enabled: true,
+    isHovering: false,
+    canvasX: 0,
+    canvasY: 0,
+    normX: 0.0,
+    normY: 0.0,
+    scalarValue: 0.0,
+    pos3D: { x: 0.0, y: 0.0, z: -1.5 },
+    throttleMs: 60, // Hover earcon throttle interval
+    lastTriggerTime: 0,
+    lastCoord: { x: -1, y: -1, col: -1, row: -1 },
+    scalarData: null, // Secondary raw scalar dataset
+    scalarUrl: null,
+    activeEarconPings: [], // Visual reticle ripples
+  },
 };
 
 // ============================================================================
@@ -52,6 +70,8 @@ let pointSynth;
 let pluckSynth;
 let diffusePanner;
 let pointPanner;
+let spatialCursorPanner = null;
+let spatialCursorSynth = null;
 let audioInitialized = false;
 let synthMap = {};
 
@@ -184,6 +204,9 @@ function initAudioEngine() {
     Tone.Transport.loop = false;
     Tone.Transport.bpm.value = 120;
 
+    // 9. Initialize 3D Spatial Audio Exploration Cursor (Task 15)
+    initSpatialCursorAudio();
+
     audioInitialized = true;
     updateAudioStatusUI();
     console.log("[Earth Jukebox] Tone.js audio engine & synths initialized.");
@@ -191,6 +214,275 @@ function initAudioEngine() {
     console.error("[Earth Jukebox] Error initializing audio engine:", err);
   }
 }
+
+/**
+ * Initialize 3D Spatial Audio Panner (Tone.Panner3D or Web Audio PannerNode)
+ * and the dedicated earcon synthesizer for hover exploration.
+ */
+function initSpatialCursorAudio() {
+  if (spatialCursorPanner && spatialCursorSynth) {
+    return { panner: spatialCursorPanner, synth: spatialCursorSynth };
+  }
+
+  // 1. Initialize 3D Spatial Panner (Tone.Panner3D or Web Audio PannerNode)
+  if (!spatialCursorPanner) {
+    try {
+      // Option A: Tone.Panner3D
+      if (typeof Tone !== "undefined" && typeof Tone.Panner3D === "function") {
+        spatialCursorPanner = new Tone.Panner3D({
+          panningModel: "HRTF",
+          distanceModel: "inverse",
+          positionX: 0,
+          positionY: 0,
+          positionZ: -1.5,
+          refDistance: 1,
+          maxDistance: 1000,
+          rolloffFactor: 1,
+        });
+        if (masterVolume && typeof spatialCursorPanner.connect === "function") {
+          spatialCursorPanner.connect(masterVolume);
+        } else if (Tone.Destination && typeof spatialCursorPanner.connect === "function") {
+          spatialCursorPanner.connect(Tone.Destination);
+        }
+        console.log("[Earth Jukebox] Initialized Tone.Panner3D for spatial audio cursor.");
+      }
+      // Option B: Native Web Audio PannerNode via Tone.context or AudioContext
+      else if (typeof Tone !== "undefined" && Tone.context) {
+        const rawCtx = Tone.context.rawContext || Tone.context;
+        if (rawCtx && typeof rawCtx.createPanner === "function") {
+          spatialCursorPanner = rawCtx.createPanner();
+          spatialCursorPanner.panningModel = "HRTF";
+          spatialCursorPanner.distanceModel = "inverse";
+          spatialCursorPanner.refDistance = 1;
+          spatialCursorPanner.maxDistance = 1000;
+          spatialCursorPanner.rolloffFactor = 1;
+
+          if (spatialCursorPanner.positionZ && typeof spatialCursorPanner.positionZ.value !== "undefined") {
+            spatialCursorPanner.positionX.value = 0;
+            spatialCursorPanner.positionY.value = 0;
+            spatialCursorPanner.positionZ.value = -1.5;
+          } else if (typeof spatialCursorPanner.setPosition === "function") {
+            spatialCursorPanner.setPosition(0, 0, -1.5);
+          }
+
+          const dest = (masterVolume && masterVolume.input)
+            ? masterVolume.input
+            : (masterVolume || (Tone.Destination ? (Tone.Destination.input || Tone.Destination) : null));
+          if (dest && typeof spatialCursorPanner.connect === "function") {
+            spatialCursorPanner.connect(dest);
+          }
+          console.log("[Earth Jukebox] Initialized native Web Audio PannerNode for spatial audio cursor.");
+        }
+      }
+    } catch (err) {
+      console.warn("[Earth Jukebox] 3D Panner initialization failed, falling back to stereo Panner:", err);
+    }
+
+    // Option C: Fallback to stereo Tone.Panner if 3D panners are unsupported
+    if (!spatialCursorPanner && typeof Tone !== "undefined" && typeof Tone.Panner === "function") {
+      spatialCursorPanner = new Tone.Panner(0);
+      if (masterVolume && typeof spatialCursorPanner.connect === "function") {
+        spatialCursorPanner.connect(masterVolume);
+      }
+    }
+  }
+
+  // 2. Initialize Earcon Synthesizer
+  if (!spatialCursorSynth) {
+    try {
+      const synthConfig = {
+        oscillator: {
+          type: "sine",
+        },
+        envelope: {
+          attack: 0.003,
+          decay: 0.07,
+          sustain: 0.0,
+          release: 0.07,
+        },
+      };
+
+      if (typeof Tone !== "undefined" && typeof Tone.PolySynth === "function") {
+        spatialCursorSynth = new Tone.PolySynth(Tone.Synth, synthConfig);
+      } else if (typeof Tone !== "undefined" && typeof Tone.Synth === "function") {
+        spatialCursorSynth = new Tone.Synth(synthConfig);
+      }
+
+      if (spatialCursorSynth) {
+        if (spatialCursorSynth.volume) {
+          spatialCursorSynth.volume.value = -6;
+        }
+        if (spatialCursorPanner && typeof spatialCursorSynth.connect === "function") {
+          spatialCursorSynth.connect(spatialCursorPanner);
+        }
+      }
+    } catch (err) {
+      console.warn("[Earth Jukebox] Earcon synth initialization failed:", err);
+    }
+  }
+
+  return { panner: spatialCursorPanner, synth: spatialCursorSynth };
+}
+
+/**
+ * Apply 3D coordinates to Tone.Panner3D or native Web Audio PannerNode across standard APIs.
+ */
+function setPannerCoordinates(panner, x, y, z) {
+  if (!panner) return;
+
+  const audioTime = (Tone && Tone.now) ? Tone.now() : 0;
+
+  // 1. AudioParam interface (Standard Web Audio PannerNode & Tone.Panner3D)
+  if (panner.positionX && typeof panner.positionX.setValueAtTime === "function") {
+    try {
+      panner.positionX.setValueAtTime(x, audioTime);
+      panner.positionY.setValueAtTime(y, audioTime);
+      panner.positionZ.setValueAtTime(z, audioTime);
+      return;
+    } catch (_) {}
+  }
+
+  if (panner.positionX && typeof panner.positionX.value !== "undefined") {
+    panner.positionX.value = x;
+    panner.positionY.value = y;
+    panner.positionZ.value = z;
+    return;
+  }
+
+  // 2. Tone.Panner3D set() helper
+  if (typeof panner.set === "function") {
+    try {
+      panner.set({ positionX: x, positionY: y, positionZ: z });
+      return;
+    } catch (_) {}
+  }
+
+  // 3. Web Audio legacy setPosition method
+  if (typeof panner.setPosition === "function") {
+    try {
+      panner.setPosition(x, y, z);
+      return;
+    } catch (_) {}
+  }
+
+  // 4. Stereo fallback (Tone.Panner)
+  if (panner.pan) {
+    const panVal = Math.max(-1.0, Math.min(1.0, x / 3.5));
+    if (typeof panner.pan.setValueAtTime === "function") {
+      panner.pan.setValueAtTime(panVal, audioTime);
+    } else if (typeof panner.pan.value !== "undefined") {
+      panner.pan.value = panVal;
+    }
+  }
+}
+
+/**
+ * Update 3D spatial acoustic position of the probe cursor based on mouse coordinates.
+ * Maps canvas (normX, normY) into 3D Cartesian coordinates (posX, posY, posZ).
+ * 
+ * @param {number} normX - Normalized horizontal coordinate [0.0 .. 1.0] (0 = left, 1 = right)
+ * @param {number} normY - Normalized vertical coordinate [0.0 .. 1.0] (0 = top, 1 = bottom)
+ * @param {number} [scalar=0.5] - Probed scalar energy value [0.0 .. 1.0]
+ * @returns {Object} 3D coordinates { x, y, z }
+ */
+function updateSpatialAudioPosition(normX, normY, scalar = 0.5) {
+  // Map normalized horizontal coordinate [0..1] to acoustic azimuth [-3.5m .. +3.5m]
+  const clampedX = Math.max(0.0, Math.min(1.0, normX));
+  const posX = (clampedX * 2.0 - 1.0) * 3.5;
+
+  // Map normalized vertical coordinate [0..1] to acoustic elevation [+2.5m .. -2.5m]
+  // In Web Audio 3D coordinates: +Y is UP, -Y is DOWN
+  const clampedY = Math.max(0.0, Math.min(1.0, normY));
+  const posY = (1.0 - clampedY * 2.0) * 2.5;
+
+  // Map depth (Z): sound plane in front of listener (-1.5m), with subtle scalar relief
+  const clampedScalar = Math.max(0.0, Math.min(1.0, scalar));
+  const posZ = -1.5 + (clampedScalar - 0.5) * 0.4;
+
+  const pos3D = { x: posX, y: posY, z: posZ };
+  state.spatialCursor.pos3D = pos3D;
+
+  const audioObjs = initSpatialCursorAudio();
+  if (audioObjs && audioObjs.panner) {
+    setPannerCoordinates(audioObjs.panner, posX, posY, posZ);
+  }
+
+  return pos3D;
+}
+
+/**
+ * Create and trigger a short "earcon" sound when hovering over the data map.
+ * The earcon's pitch, timbre, and amplitude reflect the probed scalar intensity,
+ * spatialized in 3D audio space.
+ * 
+ * @param {number} scalar - Probed scalar value [0.0 .. 1.0]
+ * @param {number} normX - Normalized horizontal coordinate [0.0 .. 1.0]
+ * @param {number} normY - Normalized vertical coordinate [0.0 .. 1.0]
+ * @returns {boolean} True if earcon triggered, false if throttled
+ */
+function triggerHoverEarcon(scalar, normX, normY) {
+  if (!state.spatialCursor.enabled) return false;
+
+  const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  if (now - state.spatialCursor.lastTriggerTime < state.spatialCursor.throttleMs) {
+    return false; // Throttled to prevent audio buffer saturation
+  }
+  state.spatialCursor.lastTriggerTime = now;
+
+  // 1. Update 3D spatial position in acoustic space
+  updateSpatialAudioPosition(normX, normY, scalar);
+
+  // 2. Map scalar intensity to pitch:
+  // Base frequency range: 220 Hz (A3) to 1760 Hz (A6) with logarithmic musical scaling
+  const minFreq = 220.0;
+  const maxFreq = 1760.0;
+  const clampedScalar = Math.max(0.0, Math.min(1.0, scalar));
+  const freq = minFreq * Math.pow(maxFreq / minFreq, clampedScalar);
+
+  // Velocity scaled to scalar intensity with accessible floor
+  const vel = Math.max(0.2, Math.min(0.9, 0.25 + clampedScalar * 0.65));
+  const earconDuration = 0.07; // 70ms short acoustic earcon cue
+
+  // 3. Trigger synthesizer voice if audio engine is active
+  const isAudioRunning = Tone && Tone.context && Tone.context.state === "running";
+  if (isAudioRunning) {
+    const audioObjs = initSpatialCursorAudio();
+    const synth = audioObjs ? audioObjs.synth : null;
+    if (synth) {
+      try {
+        if (typeof synth.triggerAttackRelease === "function") {
+          synth.triggerAttackRelease(freq, earconDuration, undefined, vel);
+        } else if (typeof synth.triggerAttack === "function") {
+          synth.triggerAttack(freq, undefined, vel);
+        }
+      } catch (err) {
+        console.warn("[Earth Jukebox] Hover earcon trigger error:", err);
+      }
+    }
+  }
+
+  // 4. Register visual acoustic reticle pulse on canvas
+  spawnCursorPing(state.spatialCursor.canvasX, state.spatialCursor.canvasY, clampedScalar);
+  return true;
+}
+
+/**
+ * Register visual reticle ping ripple on the canvas.
+ */
+function spawnCursorPing(x, y, scalar) {
+  if (!state.spatialCursor || !Array.isArray(state.spatialCursor.activeEarconPings)) return;
+  state.spatialCursor.activeEarconPings.push({
+    x: x,
+    y: y,
+    radius: 4,
+    alpha: 240,
+    scalar: scalar,
+  });
+  if (state.spatialCursor.activeEarconPings.length > 10) {
+    state.spatialCursor.activeEarconPings.shift();
+  }
+}
+
 
 /**
  * Ensure AudioContext is unlocked following browser autoplay policy.
@@ -548,6 +840,20 @@ const sketch = (p) => {
     const cnv = p.createCanvas(canvasWidth, canvasHeight);
     cnv.parent("canvas-container");
 
+    // Track mousemove, mouseenter, mouseleave and click over p5 canvas (Task 15)
+    if (cnv && cnv.elt) {
+      cnv.elt.addEventListener("mousemove", (e) => handleCanvasMouseMove(e, p, cnv.elt));
+      cnv.elt.addEventListener("mouseenter", () => handleCanvasMouseEnter());
+      cnv.elt.addEventListener("mouseleave", () => handleCanvasMouseLeave());
+      cnv.elt.addEventListener("click", async (e) => {
+        await ensureAudioContext();
+        handleCanvasMouseMove(e, p, cnv.elt);
+        if (state.spatialCursor && state.spatialCursor.enabled) {
+          triggerHoverEarcon(state.spatialCursor.scalarValue, state.spatialCursor.normX, state.spatialCursor.normY);
+        }
+      });
+    }
+
     // Remove placeholder
     const placeholder = document.getElementById("canvas-placeholder");
     if (placeholder) placeholder.style.display = "none";
@@ -605,7 +911,12 @@ const sketch = (p) => {
       drawScanHead(p, normProgress);
     }
 
-    // 6. Update HUD overlays
+    // 6. Render Spatial Audio Exploration Reticle & Earcon Ripples (Task 15)
+    if (state.spatialCursor && state.spatialCursor.enabled) {
+      drawSpatialAudioCursor(p);
+    }
+
+    // 7. Update HUD overlays
     updateHUD(p);
   };
 
@@ -818,13 +1129,83 @@ const sketch = (p) => {
   }
 
   /**
+   * Render 3D spatial audio cursor reticle, probing beacon and expanding earcon ripples.
+   */
+  function drawSpatialAudioCursor(p) {
+    const cursor = state.spatialCursor;
+    if (!cursor || !cursor.isHovering) return;
+
+    const cx = cursor.canvasX;
+    const cy = cursor.canvasY;
+    const scalar = Math.max(0.0, Math.min(1.0, cursor.scalarValue));
+    const [r, g, b] = samplePalette(scalar);
+
+    p.push();
+
+    // 1. Draw expanding acoustic earcon ripples
+    for (let i = cursor.activeEarconPings.length - 1; i >= 0; i--) {
+      const ping = cursor.activeEarconPings[i];
+      ping.radius += 2.0;
+      ping.alpha -= 5.5;
+
+      if (ping.alpha <= 0) {
+        cursor.activeEarconPings.splice(i, 1);
+        continue;
+      }
+
+      p.noFill();
+      p.stroke(r, g, b, ping.alpha);
+      p.strokeWeight(1.8);
+      p.ellipse(ping.x, ping.y, ping.radius * 2, ping.radius * 2);
+    }
+
+    // 2. Cursor crosshairs
+    p.stroke(r, g, b, 175);
+    p.strokeWeight(1.2);
+    p.line(cx - 14, cy, cx - 4, cy);
+    p.line(cx + 4, cy, cx + 14, cy);
+    p.line(cx, cy - 14, cx, cy - 4);
+    p.line(cx, cy + 4, cx, cy + 14);
+
+    // 3. Probing targeting ring
+    p.noFill();
+    p.stroke(r, g, b, 235);
+    p.strokeWeight(1.5);
+    const probeRadius = 7 + scalar * 6;
+    p.ellipse(cx, cy, probeRadius * 2, probeRadius * 2);
+
+    // 4. Center indicator pip
+    p.fill(255);
+    p.noStroke();
+    p.ellipse(cx, cy, 3, 3);
+
+    // 5. Floating HUD tooltip next to cursor
+    const tagX = cx + 12;
+    const tagY = cy - 12;
+    const tagText = `Val: ${scalar.toFixed(3)}`;
+    p.textSize(10);
+    const textW = p.textWidth(tagText) + 8;
+    p.fill(15, 23, 42, 215);
+    p.stroke(r, g, b, 180);
+    p.strokeWeight(1);
+    p.rect(tagX, tagY - 12, textW, 16, 3);
+    p.noStroke();
+    p.fill(255);
+    p.text(tagText, tagX + 4, tagY);
+
+    p.pop();
+  }
+
+  /**
    * Live HUD telemetry readout.
    */
   function updateHUD(p) {
     const dataW = p.width - 45;
     const hudCoords = document.getElementById("hud-coordinates");
     if (hudCoords) {
-      if (p.mouseX >= 0 && p.mouseX <= dataW && p.mouseY >= 0 && p.mouseY <= p.height) {
+      if (state.spatialCursor && state.spatialCursor.isHovering) {
+        hudCoords.textContent = `X: ${Math.round(state.spatialCursor.canvasX)} | Y: ${Math.round(state.spatialCursor.canvasY)} | Scalar: ${state.spatialCursor.scalarValue.toFixed(3)}`;
+      } else if (p.mouseX >= 0 && p.mouseX <= dataW && p.mouseY >= 0 && p.mouseY <= p.height) {
         hudCoords.textContent = `X: ${Math.round(p.mouseX)} | Y: ${Math.round(p.mouseY)}`;
       } else {
         hudCoords.textContent = `X: -- | Y: --`;
@@ -1106,6 +1487,365 @@ function generateAlgorithmicDemoBlueprint() {
 }
 
 // ============================================================================
+// 5.5. Accessibility: Spatial Audio Cursor & Scalar Data Loading Engine (Task 15)
+// ============================================================================
+
+/**
+ * Load and parse secondary JSON containing raw quantitative scalar data.
+ * Enables accessible probing of the true scientific data underlying legacy RGB pixels.
+ * 
+ * @param {string|Object} jsonUrlOrData - URL string or parsed JSON object/array
+ * @returns {Promise<Object>} Resolves with parsed scalar dataset
+ */
+async function loadScalarData(jsonUrlOrData) {
+  let rawData = null;
+
+  if (typeof jsonUrlOrData === "string") {
+    try {
+      const response = await fetch(jsonUrlOrData);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      rawData = await response.json();
+      state.spatialCursor.scalarUrl = jsonUrlOrData;
+    } catch (err) {
+      console.warn(`[Earth Jukebox] Failed to fetch secondary scalar JSON from "${jsonUrlOrData}", using procedural fallback:`, err.message);
+      state.spatialCursor.scalarData = generateProceduralScalarData();
+      updateScalarTelemetryUI();
+      return state.spatialCursor.scalarData;
+    }
+  } else if (typeof jsonUrlOrData === "object" && jsonUrlOrData !== null) {
+    rawData = jsonUrlOrData;
+  } else {
+    state.spatialCursor.scalarData = generateProceduralScalarData();
+    updateScalarTelemetryUI();
+    return state.spatialCursor.scalarData;
+  }
+
+  state.spatialCursor.scalarData = parseScalarDataset(rawData);
+  console.log(
+    `[Earth Jukebox] Secondary scalar dataset loaded: ${state.spatialCursor.scalarData.width}x${state.spatialCursor.scalarData.height} (Range: [${state.spatialCursor.scalarData.min.toFixed(4)}, ${state.spatialCursor.scalarData.max.toFixed(4)}])`
+  );
+  updateScalarTelemetryUI();
+  return state.spatialCursor.scalarData;
+}
+
+/**
+ * Parse and normalize arbitrary JSON scalar dataset formats into a uniform matrix.
+ * Supports 2D matrices, flat arrays with shape/width/height, and wrapped objects.
+ */
+function parseScalarDataset(rawData) {
+  if (!rawData) {
+    return generateProceduralScalarData();
+  }
+
+  // Case 1: Direct 2D matrix [[0.1, 0.2], ...]
+  if (Array.isArray(rawData) && Array.isArray(rawData[0])) {
+    const h = rawData.length;
+    const w = rawData[0].length;
+    let min = Infinity, max = -Infinity;
+    for (let r = 0; r < h; r++) {
+      for (let c = 0; c < w; c++) {
+        const val = Number(rawData[r][c]) || 0;
+        if (val < min) min = val;
+        if (val > max) max = val;
+      }
+    }
+    return {
+      width: w,
+      height: h,
+      matrix: rawData,
+      min: min === Infinity ? 0 : min,
+      max: max === -Infinity ? 1 : max,
+      metadata: {},
+    };
+  }
+
+  // Case 2: Wrapped object { width, height, data: ... } or { scalar_array: ... } or { matrix: ... }
+  if (typeof rawData === "object") {
+    const meta = rawData.metadata || {};
+    const innerData = rawData.data || rawData.scalar_array || rawData.matrix || rawData.values || rawData.grid;
+
+    if (Array.isArray(innerData)) {
+      // 2D nested array inside object
+      if (Array.isArray(innerData[0])) {
+        const h = innerData.length;
+        const w = innerData[0].length;
+        let min = Infinity, max = -Infinity;
+        for (let r = 0; r < h; r++) {
+          for (let c = 0; c < w; c++) {
+            const val = Number(innerData[r][c]) || 0;
+            if (val < min) min = val;
+            if (val > max) max = val;
+          }
+        }
+        return {
+          width: w,
+          height: h,
+          matrix: innerData,
+          min: typeof meta.minValue === "number" ? meta.minValue : (min === Infinity ? 0 : min),
+          max: typeof meta.maxValue === "number" ? meta.maxValue : (max === -Infinity ? 1 : max),
+          metadata: meta,
+        };
+      }
+
+      // Flat 1D array inside object
+      const w = rawData.width || (meta.width) || (rawData.shape ? rawData.shape[1] : 80);
+      const h = rawData.height || (meta.height) || (rawData.shape ? rawData.shape[0] : Math.ceil(innerData.length / w));
+      const matrix = [];
+      let min = Infinity, max = -Infinity;
+
+      for (let r = 0; r < h; r++) {
+        const row = [];
+        for (let c = 0; c < w; c++) {
+          const idx = r * w + c;
+          const val = idx < innerData.length ? (Number(innerData[idx]) || 0) : 0;
+          row.push(val);
+          if (val < min) min = val;
+          if (val > max) max = val;
+        }
+        matrix.push(row);
+      }
+
+      return {
+        width: w,
+        height: h,
+        matrix: matrix,
+        min: typeof meta.minValue === "number" ? meta.minValue : (min === Infinity ? 0 : min),
+        max: typeof meta.maxValue === "number" ? meta.maxValue : (max === -Infinity ? 1 : max),
+        metadata: meta,
+      };
+    }
+  }
+
+  return generateProceduralScalarData();
+}
+
+/**
+ * Procedural fallback scalar field matching the synthetic EIC visualization.
+ */
+function generateProceduralScalarData(w = 80, h = 50) {
+  const matrix = [];
+  const cx = w / 2;
+  const cy = h / 2;
+  let minVal = Infinity;
+  let maxVal = -Infinity;
+
+  for (let y = 0; y < h; y++) {
+    const row = [];
+    const ny = y / h;
+    for (let x = 0; x < w; x++) {
+      const nx = x / w;
+      const dist = Math.hypot(x - cx, y - cy);
+      const angle = Math.atan2(y - cy, x - cx);
+      const diffuse = 0.5 + 0.3 * Math.sin(nx * 4.0 + Math.cos(ny * 3.0)) + 0.15 * Math.sin(angle * 2.0 + dist / 8.0);
+      const spotDist = Math.hypot(x - w * 0.72, y - h * 0.35);
+      const hotspot = Math.exp(-(spotDist * spotDist) / 50.0);
+      const val = Math.max(0.0, Math.min(1.0, diffuse * 0.75 + hotspot * 0.7));
+      row.push(val);
+      if (val < minVal) minVal = val;
+      if (val > maxVal) maxVal = val;
+    }
+    matrix.push(row);
+  }
+
+  return {
+    width: w,
+    height: h,
+    matrix: matrix,
+    min: minVal === Infinity ? 0 : minVal,
+    max: maxVal === -Infinity ? 1 : maxVal,
+    metadata: { description: "Procedural fallback NASA EIC scalar field" },
+  };
+}
+
+/**
+ * Map canvas (x, y) coordinates to the underlying quantitative scalar data array.
+ * 
+ * @param {number} canvasX - Mouse X in canvas pixel space
+ * @param {number} canvasY - Mouse Y in canvas pixel space
+ * @returns {Object} Probed scalar value, grid indices, and normalized coordinates
+ */
+function getScalarAt(canvasX, canvasY) {
+  if (!state.spatialCursor.scalarData) {
+    state.spatialCursor.scalarData = generateProceduralScalarData();
+  }
+
+  const dataset = state.spatialCursor.scalarData;
+  const canvasW = p5CanvasInstance ? p5CanvasInstance.width : 800;
+  const canvasH = p5CanvasInstance ? p5CanvasInstance.height : 500;
+  const dataW = Math.max(1, canvasW - 45); // Left data area, excluding colorbar
+
+  let normX = canvasX / dataW;
+  let normY = canvasY / canvasH;
+
+  // Probe colorbar if mouse is in the right colorbar strip
+  if (canvasX > dataW && canvasX <= canvasW) {
+    const cbScalar = Math.max(0.0, Math.min(1.0, 1.0 - (canvasY - 30) / Math.max(1, canvasH - 60)));
+    return {
+      scalar: cbScalar,
+      col: dataset.width - 1,
+      row: Math.min(dataset.height - 1, Math.max(0, Math.floor(normY * dataset.height))),
+      normX: Math.max(0.0, Math.min(1.0, normX)),
+      normY: Math.max(0.0, Math.min(1.0, normY)),
+      isColorbar: true,
+    };
+  }
+
+  normX = Math.max(0.0, Math.min(1.0, normX));
+  normY = Math.max(0.0, Math.min(1.0, normY));
+
+  const col = Math.min(dataset.width - 1, Math.max(0, Math.floor(normX * dataset.width)));
+  const row = Math.min(dataset.height - 1, Math.max(0, Math.floor(normY * dataset.height)));
+
+  let val = 0;
+  if (Array.isArray(dataset.matrix) && Array.isArray(dataset.matrix[row])) {
+    val = dataset.matrix[row][col];
+  }
+
+  return {
+    scalar: typeof val === "number" ? val : 0,
+    col: col,
+    row: row,
+    normX: normX,
+    normY: normY,
+    isColorbar: false,
+  };
+}
+
+/**
+ * Handle mousemove event over the p5.js canvas to drive the spatial audio cursor.
+ */
+function handleCanvasMouseMove(e, p, canvasElt) {
+  if (!state.spatialCursor.enabled) return;
+
+  const target = canvasElt || (p5CanvasInstance ? p5CanvasInstance.canvas : null);
+  if (!target) return;
+
+  const rect = target.getBoundingClientRect();
+  const scaleX = target.width / (rect.width || 1);
+  const scaleY = target.height / (rect.height || 1);
+
+  const canvasX = Math.max(0, Math.min(target.width, (e.clientX - rect.left) * scaleX));
+  const canvasY = Math.max(0, Math.min(target.height, (e.clientY - rect.top) * scaleY));
+
+  state.spatialCursor.canvasX = canvasX;
+  state.spatialCursor.canvasY = canvasY;
+  state.spatialCursor.isHovering = true;
+
+  // Map mouse (x, y) to the underlying scalar data
+  const probe = getScalarAt(canvasX, canvasY);
+  state.spatialCursor.scalarValue = probe.scalar;
+  state.spatialCursor.normX = probe.normX;
+  state.spatialCursor.normY = probe.normY;
+
+  // Update 3D spatial audio position
+  updateSpatialAudioPosition(probe.normX, probe.normY, probe.scalar);
+
+  // Trigger earcon when hover moves between cells or beyond pixel threshold
+  const dist = Math.hypot(
+    canvasX - state.spatialCursor.lastCoord.x,
+    canvasY - state.spatialCursor.lastCoord.y
+  );
+
+  if (
+    dist >= 4 ||
+    probe.col !== state.spatialCursor.lastCoord.col ||
+    probe.row !== state.spatialCursor.lastCoord.row
+  ) {
+    state.spatialCursor.lastCoord.x = canvasX;
+    state.spatialCursor.lastCoord.y = canvasY;
+    state.spatialCursor.lastCoord.col = probe.col;
+    state.spatialCursor.lastCoord.row = probe.row;
+
+    triggerHoverEarcon(probe.scalar, probe.normX, probe.normY);
+  }
+
+  updateSpatialCursorTelemetryUI(probe);
+}
+
+/**
+ * Handle cursor entering the canvas.
+ */
+function handleCanvasMouseEnter() {
+  if (!state.spatialCursor.enabled) return;
+  state.spatialCursor.isHovering = true;
+}
+
+/**
+ * Handle cursor leaving the canvas.
+ */
+function handleCanvasMouseLeave() {
+  state.spatialCursor.isHovering = false;
+  state.spatialCursor.lastCoord = { x: -1, y: -1, col: -1, row: -1 };
+  const hudCoords = document.getElementById("hud-coordinates");
+  if (hudCoords) {
+    hudCoords.textContent = "X: -- | Y: --";
+  }
+}
+
+/**
+ * Toggle spatial audio cursor enabled state.
+ */
+function setSpatialCursorEnabled(enabled) {
+  state.spatialCursor.enabled = Boolean(enabled);
+  if (!state.spatialCursor.enabled) {
+    state.spatialCursor.isHovering = false;
+  }
+  const chk = document.getElementById("chk-spatial-cursor");
+  if (chk) chk.checked = state.spatialCursor.enabled;
+}
+
+/**
+ * Update UI telemetry indicators with live scalar probe data.
+ */
+function updateSpatialCursorTelemetryUI(probe) {
+  const hudCoords = document.getElementById("hud-coordinates");
+  if (hudCoords && state.spatialCursor.isHovering) {
+    hudCoords.textContent = `X: ${Math.round(state.spatialCursor.canvasX)} | Y: ${Math.round(state.spatialCursor.canvasY)} | Scalar: ${probe.scalar.toFixed(3)}`;
+  }
+
+  const telScalar = document.getElementById("telemetry-scalar");
+  if (telScalar) {
+    telScalar.textContent = probe.scalar.toFixed(4);
+  }
+
+  const tel3D = document.getElementById("telemetry-3d-pos");
+  if (tel3D && state.spatialCursor.pos3D) {
+    const p = state.spatialCursor.pos3D;
+    tel3D.textContent = `[${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}]m`;
+  }
+}
+
+/**
+ * Update scalar grid size readout in the UI.
+ */
+function updateScalarTelemetryUI() {
+  const gridEl = document.getElementById("telemetry-grid-size");
+  if (gridEl && state.spatialCursor.scalarData) {
+    gridEl.textContent = `${state.spatialCursor.scalarData.width} × ${state.spatialCursor.scalarData.height}`;
+  }
+}
+
+/**
+ * Handle secondary scalar JSON file upload via FileReader.
+ */
+function handleScalarFileUpload(file) {
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      await loadScalarData(parsed);
+      console.log(`[Earth Jukebox] Successfully loaded secondary scalar JSON: ${file.name}`);
+    } catch (err) {
+      alert(`Failed to parse scalar data JSON: ${err.message}`);
+      console.error(err);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ============================================================================
 // 6. DOM Event Listeners & Bootstrapping
 // ============================================================================
 
@@ -1233,6 +1973,36 @@ function setupEventListeners() {
     });
   }
 
+  // Spatial Audio Cursor Checkbox Toggle (Task 15)
+  const chkCursor = document.getElementById("chk-spatial-cursor");
+  if (chkCursor) {
+    chkCursor.addEventListener("change", (e) => {
+      setSpatialCursorEnabled(e.target.checked);
+    });
+  }
+
+  // Load Scalar Data Button & File Input (Task 15)
+  const btnLoadScalar = document.getElementById("btn-load-scalar");
+  const scalarFileInput = document.getElementById("scalar-file-input");
+  if (btnLoadScalar && scalarFileInput) {
+    btnLoadScalar.addEventListener("click", () => {
+      scalarFileInput.click();
+    });
+    scalarFileInput.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        handleScalarFileUpload(e.target.files[0]);
+      }
+    });
+  }
+
+  // Sample Scalar Data Button (Task 15)
+  const btnSampleScalar = document.getElementById("btn-load-sample-scalar");
+  if (btnSampleScalar) {
+    btnSampleScalar.addEventListener("click", () => {
+      loadScalarData("sample_scalar_data.json");
+    });
+  }
+
   // Keyboard Shortcuts: Space = Play/Pause, Esc = Stop
   window.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") return;
@@ -1264,6 +2034,9 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Auto-load default demo blueprint
   loadDefaultDemoBlueprint();
+
+  // Auto-load secondary sample scalar dataset for spatial audio probe (Task 15)
+  loadScalarData("sample_scalar_data.json");
 });
 
 // ============================================================================
@@ -1280,6 +2053,20 @@ if (typeof window !== "undefined") {
   window.stopPlayback = stopPlayback;
   window.seekPlayback = seekPlayback;
   window.state = state;
+
+  // Spatial Audio Cursor API exports (Task 15)
+  window.loadScalarData = loadScalarData;
+  window.getScalarAt = getScalarAt;
+  window.triggerHoverEarcon = triggerHoverEarcon;
+  window.updateSpatialAudioPosition = updateSpatialAudioPosition;
+  window.initSpatialCursorAudio = initSpatialCursorAudio;
+  window.setSpatialCursorEnabled = setSpatialCursorEnabled;
+  window.handleCanvasMouseMove = handleCanvasMouseMove;
+  window.handleCanvasMouseEnter = handleCanvasMouseEnter;
+  window.handleCanvasMouseLeave = handleCanvasMouseLeave;
+  window.generateProceduralScalarData = generateProceduralScalarData;
+  window.parseScalarDataset = parseScalarDataset;
+  window.spatialCursorState = state.spatialCursor;
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -1293,5 +2080,19 @@ if (typeof module !== "undefined" && module.exports) {
     stopPlayback,
     seekPlayback,
     state,
+
+    // Spatial Audio Cursor API exports (Task 15)
+    loadScalarData,
+    getScalarAt,
+    triggerHoverEarcon,
+    updateSpatialAudioPosition,
+    initSpatialCursorAudio,
+    setSpatialCursorEnabled,
+    handleCanvasMouseMove,
+    handleCanvasMouseEnter,
+    handleCanvasMouseLeave,
+    generateProceduralScalarData,
+    parseScalarDataset,
+    spatialCursorState: state.spatialCursor,
   };
 }
