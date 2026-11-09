@@ -4,9 +4,11 @@ The Earth Jukebox - Backend Package.
 
 from backend.morphology import (
     MorphologyError,
+    SegmentationResult,
     detect_point_sources,
     detect_point_sources_blob,
     detect_point_sources_contours,
+    segment_touching_objects,
     separate_features,
 )
 from backend.pipeline import (
@@ -36,6 +38,8 @@ __all__ = [
     "ColorbarNotFoundError",
     "PipelineError",
     "MorphologyError",
+    "SegmentationResult",
+    "segment_touching_objects",
     "separate_features",
     "detect_point_sources",
     "detect_point_sources_blob",

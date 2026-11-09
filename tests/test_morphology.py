@@ -7,9 +7,11 @@ import numpy as np
 
 from backend.morphology import (
     MorphologyError,
+    SegmentationResult,
     detect_point_sources,
     detect_point_sources_blob,
     detect_point_sources_contours,
+    segment_touching_objects,
     separate_features,
 )
 
@@ -604,6 +606,297 @@ class TestDetectPointSources(unittest.TestCase):
             self.assertIn("y", sources[0])
             self.assertIn("flux", sources[0])
             self.assertIn("radius", sources[0])
+
+
+class TestSegmentTouchingObjectsWatershed(unittest.TestCase):
+    """Test suite for marker-based watershed segmentation in backend/morphology.py."""
+
+    def setUp(self):
+        """Set up standard test fixtures for touching and clustered point sources."""
+        # Canvas with two touching disks
+        # Disk 1: center (35, 50), radius 10, peak 0.95
+        # Disk 2: center (51, 50), radius 10, peak 0.85
+        # Distance between centers = 16 (radii sum = 20, overlapping by 4 px)
+        self.canvas_touching = np.zeros((100, 100), dtype=np.float32)
+        y, x = np.ogrid[:100, :100]
+        m1 = (x - 35) ** 2 + (y - 50) ** 2 <= 10 ** 2
+        m2 = (x - 51) ** 2 + (y - 50) ** 2 <= 10 ** 2
+        self.canvas_touching[m1] = 0.95
+        self.canvas_touching[m2] = 0.85
+
+    def test_return_container_access_patterns(self):
+        """
+        Verify that segment_touching_objects returns a SegmentationResult that supports
+        tuple unpacking, dict-style access, attribute access, and ndarray conversion.
+        """
+        result = segment_touching_objects(self.canvas_touching)
+
+        # 1. Container type
+        self.assertIsInstance(result, SegmentationResult)
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+
+        # 2. Tuple unpacking
+        labeled_img, objects = result
+        self.assertIsInstance(labeled_img, np.ndarray)
+        self.assertIsInstance(objects, list)
+        self.assertEqual(labeled_img.shape, self.canvas_touching.shape)
+        self.assertEqual(labeled_img.dtype, np.int32)
+
+        # 3. Dict-style access
+        self.assertIn("labeled_image", result)
+        self.assertIn("objects", result)
+        self.assertIn("markers", result)
+        self.assertIs(result["labeled_image"], labeled_img)
+        self.assertIs(result["objects"], objects)
+
+        # 4. Attribute access
+        self.assertIs(result.labeled_image, labeled_img)
+        self.assertIs(result.objects, objects)
+        self.assertEqual(result.shape, self.canvas_touching.shape)
+        self.assertEqual(result.dtype, np.int32)
+
+        # 5. Array conversion
+        arr = np.asarray(result)
+        self.assertIsInstance(arr, np.ndarray)
+        self.assertEqual(arr.shape, (100, 100))
+
+        # 6. to_dict and return_dict option
+        as_dict = result.to_dict()
+        self.assertIsInstance(as_dict, dict)
+        self.assertIn("labeled_image", as_dict)
+        self.assertIn("objects", as_dict)
+
+        pure_dict = segment_touching_objects(self.canvas_touching, return_dict=True)
+        self.assertIsInstance(pure_dict, dict)
+        self.assertNotIsInstance(pure_dict, tuple)
+        self.assertIn("labeled_image", pure_dict)
+        self.assertIn("objects", pure_dict)
+
+    def test_segment_touching_objects_accurately_partitions_clusters(self):
+        """
+        Verify that marker-based watershed accurately separates two touching point sources
+        where simple contour detection merges them into a single blob.
+        """
+        # Contours detector merges touching disks into 1 object
+        merged_contours = detect_point_sources_contours(self.canvas_touching)
+        self.assertEqual(len(merged_contours), 1)
+
+        # Watershed successfully separates them into 2 distinct objects
+        labeled_image, objects = segment_touching_objects(self.canvas_touching)
+
+        self.assertEqual(len(objects), 2)
+        unique_labels = np.unique(labeled_image)
+        # Background is 0, objects are 1 and 2
+        np.testing.assert_array_equal(unique_labels, [0, 1, 2])
+
+        # Centroids and peaks
+        # Sort objects by x coordinate to identify left vs right disk
+        objs_by_x = sorted(objects, key=lambda o: o["x"])
+        obj1, obj2 = objs_by_x[0], objs_by_x[1]
+
+        # Disk 1 true center: (35.0, 50.0), peak 0.95
+        self.assertAlmostEqual(obj1["x"], 35.0, delta=1.5)
+        self.assertAlmostEqual(obj1["y"], 50.0, delta=1.5)
+        self.assertAlmostEqual(obj1["peak_intensity"], 0.95, places=4)
+        self.assertEqual(obj1["centroid"], (obj1["x"], obj1["y"]))
+
+        # Disk 2 true center: (51.0, 50.0), peak 0.85
+        self.assertAlmostEqual(obj2["x"], 51.0, delta=1.5)
+        self.assertAlmostEqual(obj2["y"], 50.0, delta=1.5)
+        self.assertAlmostEqual(obj2["peak_intensity"], 0.85, places=4)
+        self.assertEqual(obj2["centroid"], (obj2["x"], obj2["y"]))
+
+        # Verify pixels labeled 1 match object 1, and 2 match object 2
+        for obj in objects:
+            lbl = obj["label"]
+            region_mask = (labeled_image == lbl)
+            self.assertGreater(np.sum(region_mask), 0)
+            self.assertAlmostEqual(float(np.max(self.canvas_touching[region_mask])), obj["peak_intensity"])
+
+    def test_three_touching_objects_cluster(self):
+        """Verify watershed segmentation on a dense cluster of three touching objects."""
+        canvas = np.zeros((120, 120), dtype=np.float32)
+        y, x = np.ogrid[:120, :120]
+        # Triangular cluster: (45, 45), (65, 45), (55, 65) with radius 9
+        m1 = (x - 45) ** 2 + (y - 45) ** 2 <= 9 ** 2
+        m2 = (x - 65) ** 2 + (y - 45) ** 2 <= 9 ** 2
+        m3 = (x - 55) ** 2 + (y - 65) ** 2 <= 9 ** 2
+        canvas[m1] = 0.90
+        canvas[m2] = 0.80
+        canvas[m3] = 0.70
+
+        labeled_img, objects = segment_touching_objects(canvas)
+        self.assertEqual(len(objects), 3)
+        self.assertEqual(set(np.unique(labeled_img)), {0, 1, 2, 3})
+
+        # All 3 peaks should be recovered
+        peaks = sorted([o["peak_intensity"] for o in objects])
+        self.assertAlmostEqual(peaks[0], 0.70, places=3)
+        self.assertAlmostEqual(peaks[1], 0.80, places=3)
+        self.assertAlmostEqual(peaks[2], 0.90, places=3)
+
+    def test_workflow_and_metadata_export(self):
+        """Verify workflow execution and metadata returned when return_metadata=True."""
+        result = segment_touching_objects(
+            self.canvas_touching,
+            opening_iterations=1,
+            bg_iterations=3,
+            return_metadata=True,
+        )
+        self.assertIn("metadata", result)
+        meta = result.metadata
+        self.assertIn("otsu_threshold", meta)
+        self.assertIn("dist_threshold_ratio", meta)
+        self.assertIn("kernel_size", meta)
+        self.assertIn("num_objects", meta)
+        self.assertEqual(meta["num_objects"], 2)
+
+    def test_empty_and_flat_images(self):
+        """Verify behavior on empty or flat canvases."""
+        # All zeros canvas
+        empty = np.zeros((80, 80), dtype=np.float32)
+        labeled_img, objects = segment_touching_objects(empty)
+        self.assertEqual(len(objects), 0)
+        self.assertEqual(np.max(labeled_img), 0)
+        self.assertEqual(labeled_img.shape, (80, 80))
+
+        # Uniform flat positive canvas
+        flat = np.full((60, 60), 0.5, dtype=np.float32)
+        labeled_flat, flat_objs = segment_touching_objects(flat)
+        self.assertIsInstance(labeled_flat, np.ndarray)
+        self.assertIsInstance(flat_objs, list)
+
+    def test_input_data_types_and_formats(self):
+        """Verify segment_touching_objects handles float32, uint8, and 3D inputs."""
+        # uint8 input
+        u8_img = (self.canvas_touching * 255).astype(np.uint8)
+        labeled_u8, objs_u8 = segment_touching_objects(u8_img)
+        self.assertEqual(len(objs_u8), 2)
+
+        # 3D single channel input
+        img_3d = self.canvas_touching[:, :, np.newaxis]
+        labeled_3d, objs_3d = segment_touching_objects(img_3d)
+        self.assertEqual(len(objs_3d), 2)
+        self.assertEqual(labeled_3d.shape, (100, 100))
+
+        # Python list of lists
+        list_input = self.canvas_touching.tolist()
+        labeled_list, objs_list = segment_touching_objects(list_input)
+        self.assertEqual(len(objs_list), 2)
+
+    def test_parameter_validation_and_error_handling(self):
+        """Verify exception handling for invalid inputs and configuration parameters."""
+        valid_img = np.zeros((40, 40), dtype=np.float32)
+
+        # None input
+        with self.assertRaises(TypeError):
+            segment_touching_objects(None)
+
+        # Empty array
+        with self.assertRaises(ValueError):
+            segment_touching_objects(np.array([]))
+
+        # 1D array
+        with self.assertRaises(ValueError):
+            segment_touching_objects(np.zeros(40, dtype=np.float32))
+
+        # dist_threshold_ratio <= 0
+        with self.assertRaises(ValueError):
+            segment_touching_objects(valid_img, dist_threshold_ratio=0.0)
+
+        # dist_threshold_ratio >= 1
+        with self.assertRaises(ValueError):
+            segment_touching_objects(valid_img, dist_threshold_ratio=1.0)
+
+        # min_area > max_area
+        with self.assertRaises(ValueError):
+            segment_touching_objects(valid_img, min_area=100, max_area=10)
+
+        # Invalid kernel size
+        with self.assertRaises(ValueError):
+            segment_touching_objects(valid_img, opening_kernel_size=(0, 3))
+
+    def test_sorting_options(self):
+        """Verify sorting objects by peak_intensity and x coordinates."""
+        # Sort by peak_intensity descending (default)
+        _, by_peak = segment_touching_objects(
+            self.canvas_touching, sort_by="peak_intensity", descending=True
+        )
+        self.assertEqual(len(by_peak), 2)
+        self.assertGreaterEqual(by_peak[0]["peak_intensity"], by_peak[1]["peak_intensity"])
+        self.assertEqual(by_peak[0]["label"], 1)
+        self.assertEqual(by_peak[1]["label"], 2)
+
+        # Sort by x ascending
+        _, by_x = segment_touching_objects(self.canvas_touching, sort_by="x", descending=False)
+        self.assertLessEqual(by_x[0]["x"], by_x[1]["x"])
+        self.assertEqual(by_x[0]["label"], 1)
+        self.assertEqual(by_x[1]["label"], 2)
+
+    def test_area_filtering(self):
+        """Verify min_area and max_area filter out objects of unwanted sizes."""
+        canvas = np.zeros((100, 100), dtype=np.float32)
+        # Small spot (3x3 = 9 pixels)
+        canvas[20:23, 20:23] = 0.95
+        # Larger disk (radius 10 = ~314 pixels)
+        y, x = np.ogrid[:100, :100]
+        canvas[(x - 60) ** 2 + (y - 60) ** 2 <= 10 ** 2] = 0.90
+
+        # Filter out small spot with min_area = 50
+        _, filtered_objs = segment_touching_objects(canvas, min_area=50.0)
+        self.assertEqual(len(filtered_objs), 1)
+        self.assertAlmostEqual(filtered_objs[0]["x"], 60.0, delta=2.0)
+
+        # Filter out large disk with max_area = 50
+        _, small_only = segment_touching_objects(canvas, max_area=50.0)
+        self.assertEqual(len(small_only), 1)
+        self.assertAlmostEqual(small_only[0]["x"], 21.0, delta=2.0)
+
+    def test_detect_point_sources_watershed_method(self):
+        """Verify detect_point_sources seamlessly supports method='watershed'."""
+        sources = detect_point_sources(self.canvas_touching, method="watershed")
+        self.assertIsInstance(sources, list)
+        self.assertEqual(len(sources), 2)
+
+        first = sources[0]
+        self.assertIn("x", first)
+        self.assertIn("y", first)
+        self.assertIn("flux", first)
+        self.assertIn("centroid", first)
+        self.assertIn("peak_intensity", first)
+        self.assertEqual(first["method"], "watershed")
+
+    def test_dense_wildfire_analogy_hotspots(self):
+        """
+        Simulate dense wildfire hotspots with continuous Gaussian emissions where
+        hotspots overlap and merge under simple thresholding, verifying watershed
+        correctly extracts their distinct locations and peak intensities.
+        """
+        h, w = 120, 120
+        y, x = np.mgrid[0:h, 0:w]
+        # Wildfire hotspot A at (42, 60), peak intensity 0.98
+        fire_a = 0.98 * np.exp(-((x - 42) ** 2 + (y - 60) ** 2) / (2 * 7 ** 2))
+        # Wildfire hotspot B at (68, 60), peak intensity 0.88
+        fire_b = 0.88 * np.exp(-((x - 68) ** 2 + (y - 60) ** 2) / (2 * 7 ** 2))
+        composite = np.clip(fire_a + fire_b, 0.0, 1.0).astype(np.float32)
+
+        # Simple contour detection sees this as a single merged wildfire front
+        contour_detections = detect_point_sources_contours(composite)
+        self.assertEqual(len(contour_detections), 1)
+
+        # Watershed partitions the front into individual hotspot cores
+        labeled_img, hotspots = segment_touching_objects(composite)
+        self.assertEqual(len(hotspots), 2)
+
+        spots_by_x = sorted(hotspots, key=lambda s: s["x"])
+        self.assertAlmostEqual(spots_by_x[0]["x"], 42.0, delta=2.0)
+        self.assertAlmostEqual(spots_by_x[0]["y"], 60.0, delta=2.0)
+        self.assertAlmostEqual(spots_by_x[0]["peak_intensity"], 0.98, delta=0.02)
+
+        self.assertAlmostEqual(spots_by_x[1]["x"], 68.0, delta=2.0)
+        self.assertAlmostEqual(spots_by_x[1]["y"], 60.0, delta=2.0)
+        self.assertAlmostEqual(spots_by_x[1]["peak_intensity"], 0.88, delta=0.02)
 
 
 if __name__ == "__main__":

@@ -726,14 +726,515 @@ def detect_point_sources(
             max_circularity=max_circularity,
             **kwargs,
         )
+    elif method_clean in ("watershed", "watershed_segmentation", "touching", "touching_objects"):
+        labeled_img, objects = segment_touching_objects(
+            residual_image=residual_image,
+            min_area=min_area,
+            max_area=max_area,
+            sort_by=sort_by,
+            descending=descending,
+            **kwargs,
+        )
+        return objects
     else:
         raise ValueError(
-            f"Unknown point source detection method: '{method}'. Supported methods: 'blob', 'contours'."
+            f"Unknown point source detection method: '{method}'. Supported methods: 'blob', 'contours', 'watershed'."
         )
+
+
+class SegmentationResult(tuple):
+    """
+    Structured return container for marker-based watershed segmentation.
+
+    Inherits from tuple to allow seamless 2-element tuple unpacking:
+        labeled_image, objects = segment_touching_objects(residual_image)
+
+    Simultaneously provides mapping (dict-style) and attribute access:
+        result["labeled_image"], result["objects"], result.labeled_image, result.objects
+    """
+
+    def __new__(
+        cls,
+        labeled_image: np.ndarray,
+        objects: List[Dict[str, Any]],
+        markers: Optional[np.ndarray] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **extra: Any,
+    ):
+        instance = super().__new__(cls, (labeled_image, objects))
+        instance._dict = {
+            "labeled_image": labeled_image,
+            "objects": objects,
+            "markers": markers if markers is not None else labeled_image,
+            "point_sources": objects,
+            **extra,
+        }
+        if metadata is not None:
+            instance._dict["metadata"] = metadata
+        return instance
+
+    @property
+    def labeled_image(self) -> np.ndarray:
+        """2D NumPy integer array where each unique positive integer is a distinct object."""
+        return self[0]
+
+    @property
+    def objects(self) -> List[Dict[str, Any]]:
+        """List of metadata dictionaries for each segmented object (centroid, peak_intensity, etc.)."""
+        return self[1]
+
+    @property
+    def point_sources(self) -> List[Dict[str, Any]]:
+        """Alias for objects list, compatible with point source detection interfaces."""
+        return self[1]
+
+    @property
+    def markers(self) -> np.ndarray:
+        """Raw marker image from cv2.watershed (with -1 for watershed borders)."""
+        return self._dict.get("markers", self[0])
+
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        """Optional metadata dictionary containing pipeline parameters and execution details."""
+        return self._dict.get("metadata", {})
+
+    @property
+    def shape(self) -> Tuple[int, ...]:
+        """Shape of the underlying labeled image array."""
+        return self[0].shape
+
+    @property
+    def dtype(self) -> np.dtype:
+        """Data type of the underlying labeled image array."""
+        return self[0].dtype
+
+    def __array__(self) -> np.ndarray:
+        """Enables direct array conversion: np.asarray(result) -> labeled_image."""
+        return np.asarray(self[0])
+
+    def __getitem__(self, item: Any) -> Any:
+        if isinstance(item, str):
+            if item in self._dict:
+                return self._dict[item]
+            raise KeyError(item)
+        return super().__getitem__(item)
+
+    def __contains__(self, item: Any) -> bool:
+        if isinstance(item, str):
+            return item in self._dict
+        return super().__contains__(item)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dictionary-style get method."""
+        return self._dict.get(key, default)
+
+    def keys(self):
+        """Dictionary-style keys."""
+        return self._dict.keys()
+
+    def values(self):
+        """Dictionary-style values."""
+        return self._dict.values()
+
+    def items(self):
+        """Dictionary-style items."""
+        return self._dict.items()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert container to a pure standard Python dictionary."""
+        return dict(self._dict)
+
+    def __repr__(self) -> str:
+        return f"SegmentationResult(labeled_image=ndarray{self[0].shape}, num_objects={len(self[1])})"
+
+
+def _validate_morph_kernel_size(kernel_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    """
+    Validate structuring element kernel dimensions for morphological operations.
+
+    Args:
+        kernel_size: Integer or 2-tuple of positive integers.
+
+    Returns:
+        Tuple[int, int]: Validated (k_width, k_height).
+
+    Raises:
+        ValueError: If dimensions are not positive integers.
+    """
+    if isinstance(kernel_size, (int, np.integer)):
+        ksize = (int(kernel_size), int(kernel_size))
+    elif isinstance(kernel_size, (tuple, list)) and len(kernel_size) == 2:
+        try:
+            ksize = (int(kernel_size[0]), int(kernel_size[1]))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"kernel_size elements must be integers, got {kernel_size}.") from e
+    else:
+        raise ValueError(f"kernel_size must be an integer or 2-tuple, got {type(kernel_size).__name__}.")
+
+    if ksize[0] <= 0 or ksize[1] <= 0:
+        raise ValueError(f"Kernel dimensions must be positive, got {ksize}.")
+
+    return ksize
+
+
+def segment_touching_objects(
+    residual_image: Any,
+    dist_threshold_ratio: float = 0.5,
+    opening_kernel_size: Union[int, Tuple[int, int]] = (3, 3),
+    opening_iterations: int = 1,
+    bg_iterations: int = 3,
+    connectivity: int = 8,
+    min_area: float = 1.0,
+    max_area: Optional[float] = None,
+    sort_by: Optional[str] = None,
+    descending: Optional[bool] = None,
+    return_dict: bool = False,
+    return_metadata: bool = False,
+    **kwargs: Any,
+) -> Union[SegmentationResult, Dict[str, Any]]:
+    """
+    Segment closely clustered or touching point sources using marker-based watershed.
+
+    In complex scenarios such as dense wildfire clusters, stellar overdensities, or
+    adjacent storm cores, simple blob detection or standard thresholding fails because
+    individual point sources merge into a single contiguous blob. This function applies
+    the classical marker-based watershed algorithm to accurately partition the image:
+    1. Otsu's Thresholding: Automatically separates high-intensity residual foreground
+       from the zero/dark background.
+    2. Morphological Opening: Removes isolated raster noise and spurious pixel bridges.
+    3. Distance Transform: Calculates Euclidean distance from each foreground pixel to
+       the nearest zero background pixel, producing local peaks at source centers.
+    4. Sure Foreground Threshold: Thresholds distance transform (default: 0.5 * max_dist)
+       to isolate confident seed regions for each distinct object.
+    5. Dilate for Sure Background: Dilates the opened foreground to expand borders,
+       designating all untouched outer pixels as definitive background.
+    6. Unknown Borders: Subtracts sure foreground from sure background to define the
+       ambiguous transition zones where boundaries must be established.
+    7. Connected Components Marker Initialization: Labels each sure foreground component
+       as a unique integer seed, initializes sure background to 1, and marks unknown
+       boundaries as 0.
+    8. Watershed Flooding (cv2.watershed): Floods basins from seeds to establish exact
+       watershed boundary lines between touching sources.
+    9. Feature Extraction: Produces a clean labeled image (0 = background/borders,
+       1..N = distinct objects) and computes spatial centroids (cx, cy) and peak
+       intensity (flux) for every segmented region.
+
+    Args:
+        residual_image: 2D quantitative residual scalar array in [0.0, 1.0] or 8-bit image.
+        dist_threshold_ratio: Fraction of max distance transform value used to threshold
+                              sure foreground seeds (default: 0.5). Must be in (0.0, 1.0).
+        opening_kernel_size: Kernel dimensions for morphological opening (default: (3, 3)).
+        opening_iterations: Number of morphological opening iterations (default: 1).
+        bg_iterations: Number of dilation iterations to establish sure background (default: 3).
+        connectivity: Pixel connectivity for connected components (4 or 8, default: 8).
+        min_area: Minimum pixel area to retain an object (default: 1.0).
+        max_area: Maximum pixel area to retain an object (default: None, unbounded).
+        sort_by: Optional metric to sort extracted objects by ('peak_intensity', 'flux',
+                 'area', 'radius', 'x', 'y').
+        descending: Sort direction when sort_by is specified (default: True for photometric/size,
+                    False for spatial coordinates).
+        return_dict: If True, returns a standard Python dict instead of SegmentationResult.
+        return_metadata: If True, includes execution parameters and statistics in metadata.
+        **kwargs: Parameter aliases and overrides:
+            - fg_threshold / threshold_ratio / dist_ratio: Aliases for dist_threshold_ratio.
+            - kernel_size / ksize / opening_kernel: Aliases for opening_kernel_size.
+            - iterations / opening_iter: Aliases for opening_iterations.
+            - dilate_iterations / bg_iter: Aliases for bg_iterations.
+            - minArea / maxArea: Aliases for min_area / max_area.
+            - as_dict: Alias for return_dict.
+
+    Returns:
+        SegmentationResult (or Dict[str, Any] if return_dict=True):
+            Container supporting 2-tuple unpacking `labeled_image, objects = ...` as well as
+            mapping access `result["labeled_image"]`, `result["objects"]`:
+            - "labeled_image": np.ndarray (int32) of shape (H, W) where 0 is background/border
+                               and each integer 1..N designates a distinct segmented object.
+            - "objects": List of metadata dictionaries for each segmented object:
+                - "label": int, unique object identifier (1..N matching labeled_image).
+                - "centroid": Tuple[float, float], (cx, cy) spatial center of mass.
+                - "center": Tuple[float, float], alias for centroid.
+                - "x": float, horizontal center coordinate.
+                - "y": float, vertical center coordinate.
+                - "peak_intensity": float, maximum scalar intensity in [0.0, 1.0].
+                - "flux": float, alias for peak_intensity.
+                - "peak_loc": Tuple[int, int], (x, y) coordinates of the peak pixel.
+                - "area": float, pixel area of the segmented region.
+                - "perimeter": float, contour perimeter length in pixels.
+                - "radius": float, enclosing or equivalent radius in pixels.
+                - "bbox": Tuple[int, int, int, int], (x_min, y_min, width, height).
+                - "method": str, "watershed".
+
+    Raises:
+        TypeError: If residual_image is None or not convertible to a NumPy array.
+        ValueError: If residual_image is empty, not 2D, or parameters are out of valid bounds.
+    """
+    # Resolve parameter aliases
+    dist_threshold_ratio = float(
+        kwargs.get(
+            "fg_threshold",
+            kwargs.get("dist_ratio", kwargs.get("threshold_ratio", dist_threshold_ratio)),
+        )
+    )
+    opening_kernel_size = kwargs.get(
+        "kernel_size",
+        kwargs.get("ksize", kwargs.get("opening_kernel", opening_kernel_size)),
+    )
+    opening_iterations = int(kwargs.get("iterations", kwargs.get("opening_iter", opening_iterations)))
+    bg_iterations = int(kwargs.get("dilate_iterations", kwargs.get("bg_iter", bg_iterations)))
+    min_area = kwargs.get("minArea", min_area)
+    max_area = kwargs.get("maxArea", max_area)
+    return_dict = bool(kwargs.get("as_dict", return_dict))
+    return_metadata = bool(kwargs.get("return_metadata", return_metadata))
+
+    # Parameter validation
+    if dist_threshold_ratio <= 0.0 or dist_threshold_ratio >= 1.0:
+        raise ValueError(
+            f"dist_threshold_ratio must be strictly between 0.0 and 1.0 (exclusive), got {dist_threshold_ratio}."
+        )
+
+    min_a = float(min_area)
+    max_a = float(max_area) if max_area is not None else float("inf")
+    if min_a > max_a:
+        raise ValueError(f"min_area ({min_a}) must be less than or equal to max_area ({max_a}).")
+
+    ksize = _validate_morph_kernel_size(opening_kernel_size)
+
+    # Step 0: Validate and prepare scalar array
+    norm_scalar = _prepare_scalar_array(residual_image)
+    h, w = norm_scalar.shape
+    img_u8 = np.clip(norm_scalar * 255.0, 0, 255).astype(np.uint8)
+
+    # Empty canvas check
+    if np.max(img_u8) == 0:
+        empty_labeled = np.zeros((h, w), dtype=np.int32)
+        meta = {
+            "otsu_threshold": 0.0,
+            "dist_threshold_ratio": dist_threshold_ratio,
+            "num_objects": 0,
+        }
+        res = SegmentationResult(empty_labeled, [], markers=empty_labeled, metadata=meta)
+        return res.to_dict() if return_dict else res
+
+    # Step 1: Otsu's thresholding
+    otsu_val, thresh = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    if np.max(thresh) == 0 or np.sum(thresh) == 0:
+        empty_labeled = np.zeros((h, w), dtype=np.int32)
+        meta = {
+            "otsu_threshold": float(otsu_val),
+            "dist_threshold_ratio": dist_threshold_ratio,
+            "num_objects": 0,
+        }
+        res = SegmentationResult(empty_labeled, [], markers=empty_labeled, metadata=meta)
+        return res.to_dict() if return_dict else res
+
+    # Step 2: Morphological opening
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, ksize)
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=max(1, opening_iterations))
+    # Safeguard against opening eliminating tiny valid point sources
+    if np.sum(opening) == 0 and np.sum(thresh) > 0:
+        opening = thresh.copy()
+
+    # Step 3: Distance transform
+    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
+    max_dist = float(np.max(dist_transform))
+
+    if max_dist <= 0.0:
+        empty_labeled = np.zeros((h, w), dtype=np.int32)
+        meta = {
+            "otsu_threshold": float(otsu_val),
+            "dist_threshold_ratio": dist_threshold_ratio,
+            "num_objects": 0,
+        }
+        res = SegmentationResult(empty_labeled, [], markers=empty_labeled, metadata=meta)
+        return res.to_dict() if return_dict else res
+
+    # Step 4: Threshold distance transform for "sure foreground"
+    fg_ratio = float(dist_threshold_ratio)
+    has_explicit_ratio = any(
+        k in kwargs
+        for k in ("dist_threshold_ratio", "fg_threshold", "dist_ratio", "threshold_ratio")
+    )
+
+    n_open, labels_open = cv2.connectedComponents(opening, connectivity=connectivity)
+    sure_fg = np.zeros_like(opening, dtype=np.uint8)
+
+    for c in range(1, n_open):
+        comp_mask = (labels_open == c)
+        local_dist = dist_transform[comp_mask]
+        local_max = float(np.max(local_dist)) if local_dist.size > 0 else 0.0
+        if local_max <= 0.0:
+            continue
+
+        comp_fg = (dist_transform > fg_ratio * local_max) & comp_mask
+        if not has_explicit_ratio:
+            # Check if this connected component contains touching sub-objects that require a higher ratio to split
+            comp_fg_u8 = comp_fg.astype(np.uint8)
+            n_sub, _ = cv2.connectedComponents(comp_fg_u8, connectivity=connectivity)
+            if n_sub - 1 <= 1:
+                for cand_r in (0.6, 0.7, 0.75, 0.8):
+                    alt_fg = (dist_transform > cand_r * local_max) & comp_mask
+                    alt_fg_u8 = alt_fg.astype(np.uint8)
+                    alt_n, _ = cv2.connectedComponents(alt_fg_u8, connectivity=connectivity)
+                    if alt_n - 1 > 1:
+                        comp_fg = alt_fg
+                        break
+
+        # Fallback for this component if thresholding removed everything
+        if not np.any(comp_fg):
+            comp_fg = (dist_transform >= max(0.5, 0.1 * local_max)) & comp_mask
+        if not np.any(comp_fg):
+            comp_fg = comp_mask
+
+        sure_fg[comp_fg] = 255
+
+    # Global fallback if sure_fg is somehow empty
+    if np.sum(sure_fg) == 0:
+        _, sure_fg = cv2.threshold(dist_transform, 0.1 * max_dist, 255, cv2.THRESH_BINARY)
+        sure_fg = sure_fg.astype(np.uint8)
+    if np.sum(sure_fg) == 0:
+        sure_fg = (dist_transform > 0).astype(np.uint8) * 255
+
+    # Step 5: Dilate for "sure background"
+    sure_bg = cv2.dilate(opening, kernel, iterations=max(1, bg_iterations))
+
+    # Step 6: Subtract to find "unknown" borders
+    unknown = cv2.subtract(sure_bg, sure_fg)
+
+    # Step 7: Label sure foreground components and initialize markers for watershed
+    num_labels, markers = cv2.connectedComponents(sure_fg, connectivity=connectivity)
+
+    if num_labels <= 1:
+        empty_labeled = np.zeros((h, w), dtype=np.int32)
+        meta = {
+            "otsu_threshold": float(otsu_val),
+            "dist_threshold_ratio": fg_ratio,
+            "num_objects": 0,
+        }
+        res = SegmentationResult(empty_labeled, [], markers=empty_labeled, metadata=meta)
+        return res.to_dict() if return_dict else res
+
+    # Add 1 to all labels so sure background is 1, and sure foreground objects are 2..num_labels
+    markers = markers + 1
+    # Unknown border regions marked 0
+    markers[unknown == 255] = 0
+    markers = markers.astype(np.int32)
+
+    # Watershed requires 3-channel 8-bit image
+    img_3ch = cv2.cvtColor(img_u8, cv2.COLOR_GRAY2BGR)
+    cv2.watershed(img_3ch, markers)
+
+    # Step 8: Build labeled image and extract object features
+    raw_objects: List[Dict[str, Any]] = []
+    temp_labeled = np.zeros_like(markers, dtype=np.int32)
+
+    for m in range(2, num_labels + 1):
+        obj_mask = (markers == m)
+        # Restrict object footprint to positive residual foreground
+        if np.any(obj_mask & (thresh > 0)):
+            obj_mask = obj_mask & (thresh > 0)
+
+        area = float(np.sum(obj_mask))
+        if area < min_a or area > max_a:
+            continue
+
+        temp_labeled[obj_mask] = m
+        mask_u8 = obj_mask.astype(np.uint8)
+
+        # Centroid from spatial moments
+        M = cv2.moments(mask_u8)
+        if M["m00"] != 0:
+            cx = float(M["m10"] / M["m00"])
+            cy = float(M["m01"] / M["m00"])
+        else:
+            y_indices, x_indices = np.where(obj_mask)
+            cx = float(np.mean(x_indices)) if len(x_indices) > 0 else 0.0
+            cy = float(np.mean(y_indices)) if len(y_indices) > 0 else 0.0
+
+        # Peak intensity (flux) within the segmented region
+        peak_intensity = float(np.max(norm_scalar[obj_mask]))
+
+        # Peak location coordinates
+        y_peak, x_peak = np.where((obj_mask) & (norm_scalar == peak_intensity))
+        if len(x_peak) > 0:
+            peak_loc = (int(x_peak[0]), int(y_peak[0]))
+        else:
+            peak_loc = (int(round(cx)), int(round(cy)))
+
+        # Bounding box (x_min, y_min, width, height)
+        y_all, x_all = np.where(obj_mask)
+        x_min, x_max = int(np.min(x_all)), int(np.max(x_all))
+        y_min, y_max = int(np.min(y_all)), int(np.max(y_all))
+        bbox = (x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
+
+        # Perimeter and radius
+        cnts, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if cnts:
+            perimeter = float(cv2.arcLength(cnts[0], closed=True))
+            if perimeter <= 0:
+                perimeter = float(4.0 * np.sqrt(area))
+            _, min_enc_r = cv2.minEnclosingCircle(cnts[0])
+            radius = float(min_enc_r)
+        else:
+            perimeter = float(4.0 * np.sqrt(area)) if area > 0 else 0.0
+            radius = float(np.sqrt(area / np.pi)) if area > 0 else 1.0
+
+        raw_objects.append({
+            "raw_marker": m,
+            "x": cx,
+            "y": cy,
+            "centroid": (cx, cy),
+            "center": (cx, cy),
+            "peak_intensity": peak_intensity,
+            "flux": peak_intensity,
+            "peak_loc": peak_loc,
+            "area": area,
+            "perimeter": perimeter,
+            "radius": radius,
+            "bbox": bbox,
+            "method": "watershed",
+        })
+
+    # Sort objects if requested
+    if sort_by:
+        raw_objects = _sort_point_sources(raw_objects, sort_by=sort_by, descending=descending)
+
+    # Renumber labeled_image so distinct objects have contiguous integer labels 1..N
+    labeled_image = np.zeros_like(markers, dtype=np.int32)
+    final_objects: List[Dict[str, Any]] = []
+
+    for new_label, obj in enumerate(raw_objects, start=1):
+        old_marker = obj.pop("raw_marker")
+        obj["label"] = int(new_label)
+        labeled_image[temp_labeled == old_marker] = int(new_label)
+        final_objects.append(obj)
+
+    metadata: Dict[str, Any] = {
+        "otsu_threshold": float(otsu_val),
+        "dist_threshold_ratio": fg_ratio,
+        "kernel_size": ksize,
+        "opening_iterations": opening_iterations,
+        "bg_iterations": bg_iterations,
+        "connectivity": connectivity,
+        "num_objects": len(final_objects),
+    }
+
+    result = SegmentationResult(
+        labeled_image=labeled_image,
+        objects=final_objects,
+        markers=markers,
+        metadata=metadata,
+    )
+
+    if return_dict:
+        return result.to_dict()
+    return result
 
 
 __all__ = [
     "MorphologyError",
+    "SegmentationResult",
+    "segment_touching_objects",
     "separate_features",
     "detect_point_sources",
     "detect_point_sources_blob",
