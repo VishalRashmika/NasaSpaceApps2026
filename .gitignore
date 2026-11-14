@@ -1,0 +1,121 @@
+# ==============================================================================
+# Byte-compiled / optimized / cache files
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ==============================================================================
+# Distribution / packaging
+# ==============================================================================
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==============================================================================
+# Virtual environments
+# ==============================================================================
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ==============================================================================
+# Testing, coverage, and static analysis caches
+# ==============================================================================
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+htmlcov/
+.hypothesis/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.import_linter_cache/
+.cache/
+*.cache
+
+# ==============================================================================
+# Node.js / Web frontend
+# ==============================================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==============================================================================
+# Environment variables, credentials, and secrets
+# ==============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ==============================================================================
+# Operating System & IDE artifacts
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# ==============================================================================
+# Earth Jukebox runtime cache and audio renders
+# ==============================================================================
+data/cache/*
+!data/cache/.gitkeep
+*.wav
+*.mp3
+*.mid
+*.midi
+# Allow permanent checked-in audio assets
+!web/assets/**
+!data/audio/**
+
+# ==============================================================================
+# Logs
+# ==============================================================================
+*.log
+errors.log
+
+# ==============================================================================
+# Agent, automation, and local task runner state
+# ==============================================================================
+.agyq/
+agyq*.json
+queue*.md
+*.queue.md
+.agent/
+.antigravity/

@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "earth-jukebox"
+version = "0.0.0"
+description = "Earth Jukebox: sonify NASA EIC imagery by recovering the underlying data from the colour legend."
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "opencv-python-headless>=4.9",
+  "Pillow>=10",
+  "matplotlib>=3.8",
+  "mido>=1.3",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=5",
+  "hypothesis>=6.100",
+  "httpx>=0.27",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "import-linter>=2.0",
+  "pytesseract>=0.3.10",  # needed so import-linter can resolve it as a forbidden external package
+]
+ocr = ["pytesseract>=0.3.10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ------------------------------------------------------------------ pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "needs_real_samples: requires human-supplied images in data/samples (skipped if absent)",
+  "slow: long-running test",
+]
+
+# -------------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N", "C4", "RUF"]
+ignore = ["UP042"]  # we deliberately use (str, Enum)
+
+# -------------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "scipy.*", "mido.*", "matplotlib.*", "pytesseract.*"]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------- import-linter
+# THE ARCHITECTURE GUARDRAIL. Do not edit without a Decisions-log entry
+# approved by the human (docs/11 section 5).
+[tool.importlinter]
+root_packages = [
+  "earth_jukebox",
+  "fastapi", "starlette", "uvicorn", "pydantic",
+  "cv2", "scipy", "PIL", "matplotlib", "mido", "pytesseract",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Clean Architecture layering (presentation | infrastructure) -> application -> domain"
+type = "layers"
+layers = [
+  "earth_jukebox.presentation | earth_jukebox.infrastructure",
+  "earth_jukebox.application",
+  "earth_jukebox.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain and application are framework-free (numpy/stdlib only)"
+type = "forbidden"
+source_modules = ["earth_jukebox.domain", "earth_jukebox.application"]
+forbidden_modules = [
+  "fastapi", "starlette", "uvicorn", "pydantic",
+  "cv2", "scipy", "PIL", "matplotlib", "mido", "pytesseract",
+]
+
+[[tool.importlinter.contracts]]
+name = "Presentation does no signal/image/audio work"
+type = "forbidden"
+source_modules = ["earth_jukebox.presentation"]
+forbidden_modules = ["cv2", "scipy", "PIL", "matplotlib", "mido", "pytesseract"]
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure does not know the web framework"
+type = "forbidden"
+source_modules = ["earth_jukebox.infrastructure"]
+forbidden_modules = ["fastapi", "starlette", "uvicorn"]

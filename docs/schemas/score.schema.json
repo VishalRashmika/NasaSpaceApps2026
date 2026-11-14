@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://earth-jukebox.nasa/schemas/score.schema.json",
+  "title": "EarthJukeboxScore",
+  "description": "Wire schema for Earth Jukebox Score v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "mapping_version",
+    "skin_id",
+    "seed",
+    "bpm",
+    "total_beats",
+    "n_cols",
+    "n_bands",
+    "legend",
+    "voices",
+    "drone_midi",
+    "notes",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "earth-jukebox.score/1"
+    },
+    "mapping_version": {
+      "type": "string"
+    },
+    "skin_id": {
+      "type": "string"
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "bpm": {
+      "type": "number",
+      "minimum": 0
+    },
+    "total_beats": {
+      "type": "number",
+      "minimum": 0
+    },
+    "n_cols": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "n_bands": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "legend": {
+      "type": "object",
+      "required": [
+        "vmin",
+        "vmax",
+        "units",
+        "label",
+        "kind",
+        "category",
+        "center",
+        "orientation",
+        "low_at_start",
+        "scale"
+      ],
+      "properties": {
+        "vmin": { "type": "number" },
+        "vmax": { "type": "number" },
+        "units": { "type": "string" },
+        "label": { "type": "string" },
+        "kind": { "type": "string", "enum": ["sequential", "diverging"] },
+        "category": { "type": "string" },
+        "center": { "type": ["number", "null"] },
+        "orientation": { "type": "string", "enum": ["horizontal", "vertical"] },
+        "low_at_start": { "type": "boolean" },
+        "scale": { "type": "string", "enum": ["linear", "log"] }
+      }
+    },
+    "voices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "band_index", "instrument", "pan"],
+        "properties": {
+          "id": { "type": "string" },
+          "band_index": { "type": "integer" },
+          "instrument": { "type": "string" },
+          "pan": { "type": "number", "minimum": -1.0, "maximum": 1.0 }
+        }
+      }
+    },
+    "drone_midi": {
+      "type": "array",
+      "items": { "type": "number" }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "voice_id",
+          "t_beat",
+          "dur_beat",
+          "pitch_midi",
+          "velocity",
+          "accent",
+          "col",
+          "band",
+          "value",
+          "glide_to_midi",
+          "roughness",
+          "kind"
+        ],
+        "properties": {
+          "voice_id": { "type": "string" },
+          "t_beat": { "type": "number", "minimum": 0 },
+          "dur_beat": { "type": "number", "minimum": 0 },
+          "pitch_midi": { "type": "number" },
+          "velocity": { "type": "number", "minimum": 0, "maximum": 1 },
+          "accent": { "type": "boolean" },
+          "col": { "type": "integer" },
+          "band": { "type": "integer" },
+          "value": { "type": ["number", "null"] },
+          "glide_to_midi": { "type": ["number", "null"] },
+          "roughness": { "type": "number", "minimum": 0, "maximum": 1 },
+          "kind": { "type": "string", "enum": ["main", "ornament", "accent_bell"] }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

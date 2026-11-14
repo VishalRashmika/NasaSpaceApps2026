@@ -1,0 +1,25 @@
+{
+  "id": "replace-with-folder-name",
+  "title": "Human-readable title",
+  "image_file": "image.png",
+  "legend": {
+    "vmin": 0.0,
+    "vmax": 1.0,
+    "units": "units",
+    "label": "What the colours mean",
+    "kind": "sequential",
+    "category": "generic",
+    "center": null,
+    "orientation": "horizontal",
+    "low_at_start": true,
+    "scale": "linear"
+  },
+  "extent": {"lat_min": -90, "lat_max": 90, "lon_min": -180, "lon_max": 180, "projection": "equirectangular"},
+  "colorbar_box": {"x": 0, "y": 0, "w": 100, "h": 20},
+  "map_box": {"x": 0, "y": 0, "w": 100, "h": 100},
+  "colormap_hint": null,
+  "source_url": "https://",
+  "credit": "NASA ... (copy the credit line from the source page)",
+  "description": "Plain-English description for screen-reader users.",
+  "in_gallery": true
+}

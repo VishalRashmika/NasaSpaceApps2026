@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Box picker for meta.json</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 1rem; max-width: 1100px; }
+  #wrap { position: relative; display: inline-block; border: 1px solid #888; max-width: 100%; overflow: auto; }
+  canvas { display: block; cursor: crosshair; }
+  fieldset { margin: 1rem 0; }
+  button, input[type=file] { font: inherit; padding: .4rem .8rem; }
+  textarea { width: 100%; height: 9rem; font: 13px/1.4 monospace; }
+  label { margin-right: 1rem; }
+</style>
+</head>
+<body>
+<h1>Box picker</h1>
+<p>1) Load the image. 2) Choose which box you are drawing. 3) Drag a rectangle on the image.
+Coordinates are pixels of the <strong>original</strong> image. 4) Copy the JSON into <code>meta.json</code>.</p>
+<p><input type="file" id="file" accept="image/*"></p>
+<fieldset>
+  <legend>Draw which box?</legend>
+  <label><input type="radio" name="which" value="colorbar_box" checked> Colorbar (coloured part only)</label>
+  <label><input type="radio" name="which" value="map_box"> Map (data area only)</label>
+</fieldset>
+<div id="wrap"><canvas id="c" width="10" height="10"></canvas></div>
+<p id="info" aria-live="polite">No image loaded.</p>
+<p><button id="copy">Copy JSON</button></p>
+<textarea id="out" readonly aria-label="Boxes as JSON"></textarea>
+<script>
+(() => {
+  const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+  const info = document.getElementById("info"), out = document.getElementById("out");
+  const boxes = { colorbar_box: null, map_box: null };
+  const colors = { colorbar_box: "#e6007a", map_box: "#00a859" };
+  let img = null, drag = null;
+
+  function which() { return document.querySelector("input[name=which]:checked").value; }
+  function toImg(ev) {
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width, sy = canvas.height / r.height;
+    return [Math.round((ev.clientX - r.left) * sx), Math.round((ev.clientY - r.top) * sy)];
+  }
+  function draw() {
+    if (!img) return;
+    ctx.drawImage(img, 0, 0);
+    for (const k of Object.keys(boxes)) {
+      const b = boxes[k]; if (!b) continue;
+      ctx.lineWidth = Math.max(2, canvas.width / 500); ctx.strokeStyle = colors[k];
+      ctx.strokeRect(b.x + .5, b.y + .5, b.w, b.h);
+    }
+    const o = {};
+    for (const k of Object.keys(boxes)) if (boxes[k]) o[k] = boxes[k];
+    out.value = JSON.stringify(o, null, 2);
+  }
+  document.getElementById("file").addEventListener("change", (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const u = URL.createObjectURL(f), i = new Image();
+    i.onload = () => {
+      img = i; canvas.width = i.naturalWidth; canvas.height = i.naturalHeight;
+      canvas.style.maxWidth = "100%"; canvas.style.height = "auto";
+      boxes.colorbar_box = boxes.map_box = null;
+      info.textContent = `Image size: ${i.naturalWidth} x ${i.naturalHeight} px`; draw();
+    };
+    i.src = u;
+  });
+  canvas.addEventListener("pointerdown", (e) => { if (!img) return; drag = toImg(e); canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return; const [x, y] = toImg(e);
+    boxes[which()] = { x: Math.min(drag[0], x), y: Math.min(drag[1], y), w: Math.abs(x - drag[0]), h: Math.abs(y - drag[1]) };
+    draw();
+  });
+  canvas.addEventListener("pointerup", () => {
+    drag = null; const b = boxes[which()];
+    if (b && (b.w < 2 || b.h < 2)) { boxes[which()] = null; }
+    draw();
+  });
+  document.getElementById("copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(out.value); info.textContent = "Copied."; }
+    catch { out.select(); info.textContent = "Select all and copy manually (Ctrl+C)."; }
+  });
+})();
+</script>
+</body>
+</html>

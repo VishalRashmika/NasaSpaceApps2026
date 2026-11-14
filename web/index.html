@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Earth Jukebox — NASA Earth Information Center</title>
+  <meta name="description" content="Recover authentic scientific data from NASA Earth Information Center imagery by inverting colour legends, then sonify it through rigorous acoustic mappings.">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+
+  <!-- NASA Enterprise Institutional Header -->
+  <header class="app-header">
+    <div class="header-content">
+      <div class="brand">
+        <div class="nasa-brand-badge" aria-hidden="true">
+          <span class="nasa-badge-title">NASA</span>
+          <span class="nasa-badge-sub">EIC</span>
+        </div>
+        <div class="brand-text">
+          <div class="agency-label">National Aeronautics and Space Administration</div>
+          <h1>Earth Jukebox</h1>
+          <p class="tagline">Earth Information Center • Scientific Image Sonification System</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span id="status" class="status-badge" role="status" aria-live="polite">Backend checking…</span>
+        <button id="theme-toggle" class="btn btn-icon" type="button" aria-label="Toggle color theme" title="Toggle color theme">🌓</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <div id="error-alert" class="alert alert-error hidden" role="alert" aria-live="assertive">
+      <span class="alert-message"></span>
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-dismiss-error">Dismiss</button>
+    </div>
+
+    <!-- Workflow Progress Navigation -->
+    <nav class="workflow-nav" aria-label="Workflow progress">
+      <div class="nav-steps">
+        <button type="button" class="btn btn-step active" id="btn-goto-categories" aria-current="step">
+          <span class="step-num">1</span>
+          <span class="step-text">Choose Dataset &amp; Observation</span>
+        </button>
+        <span class="step-divider" aria-hidden="true">→</span>
+        <button type="button" class="btn btn-step" id="btn-goto-processing">
+          <span class="step-num">2</span>
+          <span class="step-text">Sonify &amp; Explore</span>
+        </button>
+      </div>
+      <div class="active-category-pill hidden" id="active-category-pill">
+        <span class="pill-label">Active Dataset:</span>
+        <strong class="pill-value" id="active-category-name">—</strong>
+        <button type="button" class="btn btn-sm btn-outline" id="btn-switch-category">Change Dataset</button>
+      </div>
+    </nav>
+
+    <!-- View 1: Category Selection Page (appears first) -->
+    <section id="view-categories" class="category-selection-view" aria-label="Select Sonification Category">
+      <!-- Category Intro & Prompt -->
+      <div id="category-intro-panel" class="category-intro-card">
+        <span class="intro-badge">NASA Earth &amp; Space Science Data</span>
+        <h2 class="category-selection-title">What kind of image would you like to sonify?</h2>
+        <p class="category-selection-subtitle">
+          Select an authentic NASA Earth or deep-space observation to recover physical measurements and translate them into acoustic soundscapes — or upload your own scientific map.
+        </p>
+        <div class="direct-upload-prompt">
+          <span>Have your own NASA or scientific map?</span>
+          <button type="button" id="btn-quick-custom-upload" class="btn btn-sm btn-outline">
+            Skip directly to Custom Upload →
+          </button>
+        </div>
+      </div>
+
+      <!-- Opening View Controls: Mode Switcher & Category Filters -->
+      <div id="opening-view-controls" class="opening-view-controls">
+        <div class="view-mode-tabs" role="tablist" aria-label="Opening screen display modes">
+          <button type="button" class="tab-btn active" id="tab-mode-gallery" role="tab" aria-selected="true" aria-controls="opening-gallery-section">
+            <span class="tab-icon" aria-hidden="true">🖼️</span> Preloaded Observations Gallery
+            <span class="tab-count-pill" id="total-examples-count">0</span>
+          </button>
+          <button type="button" class="tab-btn" id="tab-mode-categories" role="tab" aria-selected="false" aria-controls="category-cards-grid">
+            <span class="tab-icon" aria-hidden="true">📁</span> Browse by Dataset Context
+            <span class="tab-count-pill" id="total-categories-count">0</span>
+          </button>
+        </div>
+
+        <div class="category-filter-bar" id="category-filter-bar" role="toolbar" aria-label="Filter example gallery by category and search">
+          <div class="filter-chips-row">
+            <span class="filter-label">Filter Dataset:</span>
+            <div class="filter-chips-list" id="filter-chips-list" role="radiogroup" aria-label="Category filters">
+              <!-- Populated dynamically with chips: All, Temperature, Wind Speed... -->
+            </div>
+          </div>
+          <div class="gallery-search-row">
+            <div class="gallery-search-wrap">
+              <span class="search-icon" aria-hidden="true">🔍</span>
+              <input type="search" id="gallery-search-input" class="gallery-search-input" placeholder="Search observations (e.g. Hubble, Webb, Cat's Eye, Aerosols, Wind, ISS, M30)…" aria-label="Search preloaded NASA observations">
+              <button type="button" id="btn-clear-search" class="btn-clear-search hidden" aria-label="Clear search">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Opening Screen Preloaded Examples Gallery Section -->
+      <section id="opening-gallery-section" class="opening-gallery-section" aria-label="Preloaded NASA Example Images Gallery">
+        <div class="gallery-section-header">
+          <div class="gallery-header-text">
+            <h3 class="gallery-section-title">Authentic NASA Observations Gallery</h3>
+            <p class="gallery-section-subtitle">
+              Select any preloaded observation below to sonify it immediately with calibrated scientific acoustic parameters, or inspect its colorbar legend and mission context.
+            </p>
+          </div>
+          <div class="gallery-view-stats" id="gallery-view-stats">
+            Showing <strong id="gallery-visible-count">0</strong> observations
+          </div>
+        </div>
+
+        <div id="opening-examples-gallery" class="opening-examples-gallery" role="radiogroup" aria-label="Preloaded NASA Example Images">
+          <p class="loading-state" id="opening-gallery-loading">Discovering and loading preloaded observations…</p>
+        </div>
+      </section>
+
+      <!-- Real discovered categories grid -->
+      <div id="category-cards-grid" class="category-cards-grid hidden" role="region" aria-label="Available data categories">
+        <p class="loading-state" id="category-loading-indicator">Discovering available dataset categories…</p>
+      </div>
+
+      <!-- Category Detail & Preloaded Example Gallery -->
+      <div id="category-detail-panel" class="category-detail-panel hidden" role="region" aria-label="Selected Category Details and Gallery">
+        <div class="category-detail-header">
+          <button type="button" class="btn btn-secondary" id="btn-back-to-categories">
+            ← All Datasets
+          </button>
+          <div class="category-title-wrap">
+            <h3 id="cat-detail-title" class="cat-detail-title">Dataset Title</h3>
+            <span id="cat-legend-badge" class="badge">Legend Status</span>
+          </div>
+        </div>
+
+        <div class="category-detail-body">
+          <!-- Information & Legend Column -->
+          <div class="cat-info-col">
+            <div class="cat-section-card">
+              <h4 class="cat-section-heading">Scientific Context &amp; Mission Overview</h4>
+              <p id="cat-detail-desc" class="cat-detail-desc"></p>
+              <div id="cat-markdown-expander" class="cat-markdown-expander">
+                <button type="button" id="btn-toggle-info-md" class="btn btn-sm btn-outline" aria-expanded="false">
+                  View Full Scientific Notes ▾
+                </button>
+                <div id="cat-full-markdown" class="cat-full-markdown hidden" aria-hidden="true"></div>
+              </div>
+            </div>
+
+            <!-- Color Legend Section (only displayed for categories that have one) -->
+            <div id="cat-legend-container" class="cat-legend-card">
+              <h4 class="cat-section-heading">Color Legend Definition</h4>
+              <div id="cat-legend-image-wrap" class="cat-legend-image-wrap hidden">
+                <div class="legend-image-frame">
+                  <img id="cat-legend-img" class="cat-legend-img" alt="Colorbar legend for the selected dataset category" src="">
+                </div>
+                <p id="cat-legend-notes" class="cat-legend-notes"></p>
+              </div>
+              <div id="cat-no-legend-notice" class="cat-no-legend-notice hidden">
+                <p class="no-legend-text">
+                  <strong>Direct Spatial &amp; Event Sonification:</strong> This dataset translates discrete physical events or astronomical flux coordinates directly into pitch and resonance without an empirical gradient colorbar.
+                </p>
+              </div>
+            </div>
+
+            <!-- Sonification Concept & Data-to-Sound Mapping Section (F-108) -->
+            <div id="cat-sonification-card" class="cat-section-card cat-sonification-card">
+              <div class="cat-section-header-row">
+                <h4 class="cat-section-heading">Scientific Acoustic Design</h4>
+                <span id="cat-sonification-technique-badge" class="badge badge-technique">Technique</span>
+              </div>
+              <p id="cat-sonification-desc" class="cat-sonification-desc"></p>
+
+              <!-- Predefined Category Configuration Badges -->
+              <div id="cat-predefined-badges" class="cat-predefined-badges" role="region" aria-label="Predefined Audio Configuration"></div>
+
+              <!-- Data-to-Sound Mapping Table -->
+              <div class="cat-mapping-subsection">
+                <h5 class="cat-subsection-heading">Data-to-Sound Mapping Rules</h5>
+                <div id="cat-sound-mappings-container" class="cat-sound-mappings-container" role="region" aria-label="Data to Sound Mapping Rules">
+                  <!-- Populated dynamically -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Preloaded Example Images Gallery Column -->
+          <div class="cat-gallery-col">
+            <div class="cat-gallery-header">
+              <h4 class="cat-section-heading">
+                Authentic NASA Observations (<span id="cat-example-count">0</span> available)
+              </h4>
+              <p class="cat-gallery-hint">
+                Select an observation below to sonify it in the audio processing engine:
+              </p>
+            </div>
+
+            <div id="cat-examples-gallery" class="cat-examples-gallery" role="radiogroup" aria-label="Preloaded example images">
+              <!-- Populated dynamically -->
+            </div>
+
+            <div class="cat-actions-footer">
+              <button type="button" id="btn-sonify-selected-example" class="btn btn-primary btn-lg btn-block" aria-disabled="true">
+                Sonify Selected Image →
+              </button>
+              <button type="button" id="btn-upload-for-category" class="btn btn-secondary btn-block">
+                Or Upload Custom Image in This Dataset →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- View 2: Processing Workflow -->
+    <div id="view-processing" class="app-container hidden">
+      <!-- Left Column: Map display & Player -->
+      <section class="stage-pane" aria-label="Map visualization and playback">
+        <div class="stage-header-bar">
+          <button type="button" id="btn-back-from-stage" class="btn btn-sm btn-secondary">
+            ← Change Dataset / Image
+          </button>
+          <div class="current-selection-label">
+            <span class="selection-muted">Active:</span>
+            <strong id="stage-active-category">General</strong>
+            <span id="stage-active-image-sep" class="hidden"> | </span>
+            <span id="stage-active-image" class="stage-active-image"></span>
+          </div>
+        </div>
+
+        <div id="fallback-banner" class="banner banner-warning hidden" role="note">
+          Approximate: no colour legend was used, so this sound is not data-faithful.
+        </div>
+
+        <div class="map-wrapper" id="map-wrapper">
+          <div class="canvas-container" id="canvas-container" tabindex="0" role="region" aria-label="Interactive NASA map view and explore area">
+            <canvas id="map-canvas" width="800" height="400" aria-label="NASA Earth map preview"></canvas>
+            <div id="playhead-line" class="playhead-line" aria-hidden="true">
+              <div class="playhead-marker"></div>
+            </div>
+            <div id="box-overlay" class="box-overlay" aria-hidden="true">
+              <div id="overlay-cbox" class="box-rect box-colorbar hidden">
+                <span class="box-label">Colorbar</span>
+              </div>
+              <div id="overlay-mbox" class="box-rect box-map hidden">
+                <span class="box-label">Map</span>
+              </div>
+              <div id="explore-cursor" class="box-rect box-explore hidden"></div>
+            </div>
+          </div>
+
+          <div class="map-hud">
+            <div id="active-readout" class="readout-box" aria-live="off">
+              <span class="readout-label">Playhead:</span>
+              <span id="readout-value" class="readout-val">—</span>
+            </div>
+            <div id="quality-badge" class="quality-badge badge-neutral" aria-label="Recovery confidence">
+              No analysis
+            </div>
+          </div>
+        </div>
+
+        <!-- Time Mode frame strip (F-093) -->
+        <section id="time-mode-strip" class="time-mode-strip hidden" role="region" aria-label="Time mode frame strip" aria-hidden="true"></section>
+
+        <!-- Player controls -->
+        <div class="player-bar" role="region" aria-label="Audio player">
+          <div class="player-controls">
+            <button id="btn-play" class="btn btn-primary" type="button" aria-label="Play audio">
+              <span class="btn-icon-symbol">▶</span> Play
+            </button>
+            <button id="btn-stop" class="btn btn-secondary" type="button" aria-label="Stop audio">
+              <span class="btn-icon-symbol">⏹</span> Stop
+            </button>
+            <button id="btn-audio-legend" class="btn btn-secondary" type="button" aria-disabled="true" title="Sweep through the colour legend sound">
+              <span class="btn-icon-symbol">🎵</span> Audio Legend
+            </button>
+            <button id="btn-explore" class="btn btn-secondary" type="button" aria-pressed="false" aria-disabled="true" title="Explore map cells with keyboard or touch">
+              <span class="btn-icon-symbol">🧭</span> Explore Mode
+            </button>
+          </div>
+
+          <div class="scrubber-row">
+            <label for="player-scrub" class="sr-only">Seek position</label>
+            <input type="range" id="player-scrub" min="0" max="100" value="0" step="0.1" aria-label="Audio seek scrubber">
+            <span id="player-time" class="time-display" aria-live="off">00:00 / 00:00</span>
+          </div>
+
+          <div class="player-options">
+            <div class="form-group inline-group">
+              <label for="skin-select">Skin:</label>
+              <select id="skin-select" class="form-select">
+                <option value="neutral">Neutral (Pentatonic)</option>
+              </select>
+            </div>
+
+            <div class="form-group checkbox-group inline-group">
+              <label for="toggle-haptics" class="checkbox-label">
+                <input type="checkbox" id="toggle-haptics">
+                Haptics
+              </label>
+            </div>
+
+            <div class="dropdown" id="download-dropdown">
+              <button id="btn-download-menu" class="btn btn-secondary" type="button" aria-haspopup="true" aria-expanded="false" aria-disabled="true">
+                Export / Downloads ▾
+              </button>
+              <div class="dropdown-menu hidden" id="download-menu" role="menu">
+                <button type="button" class="dropdown-item" id="btn-play-wav" role="menuitem">Play Rendered WAV</button>
+                <a class="dropdown-item" id="link-download-wav" role="menuitem" download>Download WAV</a>
+                <a class="dropdown-item" id="link-download-mid" role="menuitem" download>Download MIDI</a>
+                <a class="dropdown-item" id="link-download-json" role="menuitem" download>Download Score JSON</a>
+              </div>
+            </div>
+          </div>
+
+          <audio id="rendered-audio" class="sr-only" preload="none"></audio>
+          <div id="explore-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+        </div>
+
+        <!-- Plain text description -->
+        <div id="description-card" class="description-card hidden">
+          <h2 class="section-title">Sound Description</h2>
+          <p id="description-text" class="description-text"></p>
+        </div>
+      </section>
+
+      <!-- Right Column: Tabs and Settings -->
+      <aside class="sidebar-pane" aria-label="Settings and information">
+        <div class="tab-list" role="tablist" aria-label="Information tabs">
+          <button id="tab-gallery" class="tab-btn active" role="tab" aria-selected="true" aria-controls="panel-gallery">Observations</button>
+          <button id="tab-upload" class="tab-btn" role="tab" aria-selected="false" aria-controls="panel-upload">Upload &amp; Legend</button>
+          <button id="tab-how-to-listen" class="tab-btn" role="tab" aria-selected="false" aria-controls="panel-how-to-listen">How to Listen</button>
+          <button id="tab-fidelity" class="tab-btn" role="tab" aria-selected="false" aria-controls="panel-fidelity">Fidelity</button>
+        </div>
+
+        <!-- Panel 1: Observations from active NASA dataset -->
+        <div id="panel-gallery" class="tab-panel active" role="tabpanel" aria-labelledby="tab-gallery">
+          <h2 class="panel-heading" id="gallery-panel-heading">NASA Dataset Observations</h2>
+          <p class="panel-intro" id="gallery-panel-intro">Browse authentic observations from the active dataset or switch datasets.</p>
+          <div id="gallery-container" class="gallery-grid" role="radiogroup" aria-label="Bundled NASA samples">
+            <!-- Populated dynamically via JS -->
+            <p id="gallery-empty" class="empty-state">No observations currently selected. Choose a NASA observation from the opening catalog or upload your own scientific map.</p>
+          </div>
+        </div>
+
+        <!-- Panel 2: Upload & Legend -->
+        <div id="panel-upload" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-upload">
+          <h2 class="panel-heading">Upload &amp; Sonify Custom Image</h2>
+
+          <!-- Category Predefined Configuration Card (Auto-Supplied) (F-108) -->
+          <div id="upload-category-config-card" class="category-config-summary-card">
+            <div class="config-card-header">
+              <span class="config-badge">Auto-Supplied Configuration</span>
+              <h3 id="upload-config-category-title" class="config-title">Active Category</h3>
+            </div>
+            <div class="config-card-grid">
+              <div class="config-item">
+                <span class="config-label">Scientific Variable:</span>
+                <strong id="upload-config-label" class="config-val">—</strong>
+              </div>
+              <div class="config-item">
+                <span class="config-label">Physical Range:</span>
+                <strong id="upload-config-range" class="config-val">—</strong>
+              </div>
+              <div class="config-item">
+                <span class="config-label">Synthesizer Voice:</span>
+                <strong id="upload-config-instrument" class="config-val">—</strong>
+              </div>
+              <div class="config-item">
+                <span class="config-label">Sonification Technique:</span>
+                <strong id="upload-config-technique" class="config-val">—</strong>
+              </div>
+            </div>
+            <p class="config-hint">Metadata is predefined from your selected category. Upload your custom image below and sonify directly without manual data entry.</p>
+
+            <details id="upload-category-mapping-details" class="config-mapping-accordion">
+              <summary class="config-mapping-summary">
+                View Sound Design Mappings &amp; Color Legend ▾
+              </summary>
+              <div class="config-mapping-body">
+                <div id="upload-config-legend-wrap" class="upload-config-legend-wrap hidden">
+                  <h4 class="cat-subheading">Colorbar Legend</h4>
+                  <div class="legend-preview-box">
+                    <img id="upload-config-legend-img" class="cat-legend-img" alt="Active category legend" src="">
+                  </div>
+                  <p id="upload-config-legend-notes" class="cat-legend-notes"></p>
+                </div>
+                <div id="upload-config-no-legend-notice" class="cat-no-legend-notice hidden">
+                  <span class="info-icon" aria-hidden="true">ℹ️</span>
+                  <p><strong>Direct Spatial &amp; Event Sonification:</strong> This category sonifies spatial coordinates and event occurrences without requiring a continuous gradient colorbar.</p>
+                </div>
+                <h4 class="cat-subheading">Data to Sound Mapping Specification</h4>
+                <div id="upload-config-mappings-table" class="cat-sound-mappings-container"></div>
+              </div>
+            </details>
+          </div>
+
+          <div class="upload-zone" id="upload-zone">
+            <p>Drag &amp; drop a NASA image here, or</p>
+            <label for="file-input" class="btn btn-secondary">Browse File</label>
+            <input type="file" id="file-input" class="sr-only" accept="image/png,image/jpeg,image/webp,image/gif">
+            <p class="upload-hint">PNG, JPEG, WebP, GIF up to 20 MB</p>
+          </div>
+
+          <form id="legend-form" class="legend-form" novalidate>
+            <button type="submit" id="btn-analyze" class="btn btn-primary btn-block btn-lg">
+              Analyze &amp; Sonify Image
+            </button>
+
+            <!-- Collapsible Advanced Settings (Optional overrides for power users) -->
+            <details id="advanced-settings-toggle" class="advanced-settings-accordion">
+              <summary class="advanced-settings-summary">
+                Advanced Parameters &amp; Custom Overrides (Optional)
+              </summary>
+              <div class="advanced-settings-body">
+                <fieldset class="form-section">
+                  <legend>Colorbar Region</legend>
+                  <div class="btn-row">
+                    <button type="button" id="btn-suggest-cbox" class="btn btn-sm btn-secondary">Suggest Colorbar</button>
+                  </div>
+                  <div class="coord-grid">
+                    <div class="form-group">
+                      <label for="cbox-x">X:</label>
+                      <input type="number" id="cbox-x" class="form-input num-input" min="0" step="1">
+                    </div>
+                    <div class="form-group">
+                      <label for="cbox-y">Y:</label>
+                      <input type="number" id="cbox-y" class="form-input num-input" min="0" step="1">
+                    </div>
+                    <div class="form-group">
+                      <label for="cbox-w">Width:</label>
+                      <input type="number" id="cbox-w" class="form-input num-input" min="1" step="1">
+                    </div>
+                    <div class="form-group">
+                      <label for="cbox-h">Height:</label>
+                      <input type="number" id="cbox-h" class="form-input num-input" min="1" step="1">
+                    </div>
+                  </div>
+                </fieldset>
+
+                <fieldset class="form-section">
+                  <legend>Colormap &amp; Legend Metadata</legend>
+                  <div class="form-group">
+                    <label for="legend-preset">Preset:</label>
+                    <select id="legend-preset" class="form-select">
+                      <option value="">None — Extract from image colorbar</option>
+                    </select>
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="legend-label">Label: *</label>
+                      <input type="text" id="legend-label" class="form-input" placeholder="e.g. Surface Temperature" required aria-describedby="err-label">
+                      <span id="err-label" class="field-error" aria-live="polite"></span>
+                    </div>
+                    <div class="form-group">
+                      <label for="legend-units">Units: *</label>
+                      <input type="text" id="legend-units" class="form-input" placeholder="e.g. °C" required aria-describedby="err-units">
+                      <span id="err-units" class="field-error" aria-live="polite"></span>
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="legend-vmin">Min Value (vmin): *</label>
+                      <input type="number" id="legend-vmin" class="form-input" step="any" placeholder="0" required aria-describedby="err-vmin">
+                      <span id="err-vmin" class="field-error" aria-live="polite"></span>
+                    </div>
+                    <div class="form-group">
+                      <label for="legend-vmax">Max Value (vmax): *</label>
+                      <input type="number" id="legend-vmax" class="form-input" step="any" placeholder="100" required aria-describedby="err-vmax">
+                      <span id="err-vmax" class="field-error" aria-live="polite"></span>
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="legend-kind">Colormap Kind:</label>
+                      <select id="legend-kind" class="form-select">
+                        <option value="sequential">Sequential</option>
+                        <option value="diverging">Diverging</option>
+                      </select>
+                    </div>
+                    <div class="form-group" id="group-center">
+                      <label for="legend-center">Center Value:</label>
+                      <input type="number" id="legend-center" class="form-input" step="any" placeholder="0" aria-describedby="err-center">
+                      <span id="err-center" class="field-error" aria-live="polite"></span>
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="legend-category">Category:</label>
+                      <select id="legend-category" class="form-select">
+                        <option value="temperature">Temperature (Near-Surface Thermal)</option>
+                        <option value="ocean">Ocean &amp; Wind Speed</option>
+                        <option value="precipitation">Precipitation &amp; Clouds / Lightning</option>
+                        <option value="aerosol">Aerosol Optical Thickness</option>
+                        <option value="ice">Deep Space / Celestial Flux</option>
+                        <option value="vegetation">Vegetation &amp; Land Cover (NDVI)</option>
+                        <option value="generic">Generic Scientific Observation</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label for="legend-scale">Scale:</label>
+                      <select id="legend-scale" class="form-select">
+                        <option value="linear">Linear</option>
+                        <option value="log">Logarithmic</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="legend-orientation">Orientation:</label>
+                      <select id="legend-orientation" class="form-select">
+                        <option value="horizontal">Horizontal</option>
+                        <option value="vertical">Vertical</option>
+                      </select>
+                    </div>
+                    <div class="form-group checkbox-group">
+                      <label for="legend-low-at-start">
+                        <input type="checkbox" id="legend-low-at-start" checked>
+                        Low value is at start
+                      </label>
+                    </div>
+                  </div>
+                </fieldset>
+              </div>
+            </details>
+          </form>
+        </div>
+
+        <!-- Panel 3: How to Listen -->
+        <div id="panel-how-to-listen" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-how-to-listen">
+          <h2 class="panel-heading">How to Listen</h2>
+          <div id="active-category-listen-info" class="category-listen-card hidden">
+            <h3 id="listen-category-title" class="listen-cat-title">Active Category Sound Design</h3>
+            <span id="listen-category-badge" class="badge badge-technique"></span>
+            <p id="listen-category-technique" class="listen-cat-technique"></p>
+            <div id="listen-category-mapping-wrap" class="listen-cat-mapping-wrap"></div>
+          </div>
+          <div id="explainer-content" class="explainer-content">
+            <p>Earth Jukebox maps scientific data to sound using a strict, versioned sonification protocol:</p>
+            <div id="mapping-table-container">Loading mapping specification…</div>
+          </div>
+        </div>
+
+        <!-- Panel 4: Fidelity -->
+        <div id="panel-fidelity" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-fidelity">
+          <h2 class="panel-heading">Fidelity &amp; Verification</h2>
+          <div id="fidelity-content" class="fidelity-content">
+            <dl class="meta-list">
+              <dt>Inversion Confidence:</dt>
+              <dd id="fid-confidence">—</dd>
+              <dt>Confidence Badge:</dt>
+              <dd id="fid-badge">—</dd>
+              <dt>Score Round-Trip Correlation (r):</dt>
+              <dd id="fid-r">—</dd>
+              <dt>Legend Pitch Correlation (r):</dt>
+              <dd id="fid-legend-r">—</dd>
+              <dt>Mapping Version:</dt>
+              <dd id="fid-version">—</dd>
+              <dt>Recovered Grid Size:</dt>
+              <dd id="fid-grid">—</dd>
+            </dl>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- High-Resolution Observation Preview Lightbox Modal -->
+    <div id="observation-preview-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-obs-title" aria-hidden="true">
+      <div class="modal-dialog modal-gallery-preview">
+        <div class="modal-header">
+          <div class="modal-header-titles">
+            <span class="modal-badge" id="modal-obs-mission">NASA Observation</span>
+            <h3 id="modal-obs-title" class="modal-title">Observation Title</h3>
+          </div>
+          <button type="button" class="btn btn-icon btn-close-modal" id="btn-close-obs-modal" aria-label="Close preview" title="Close preview">✕</button>
+        </div>
+        <div class="modal-body modal-preview-body">
+          <div class="modal-image-col">
+            <div class="modal-image-frame">
+              <img id="modal-obs-img" class="modal-full-img" alt="" src="">
+            </div>
+          </div>
+          <div class="modal-meta-col">
+            <div class="modal-meta-section">
+              <h4 class="modal-meta-heading">Scientific Context &amp; Mission</h4>
+              <p id="modal-obs-desc" class="modal-obs-desc"></p>
+            </div>
+            <div id="modal-legend-section" class="modal-meta-section">
+              <h4 class="modal-meta-heading">Color Legend Definition</h4>
+              <div id="modal-legend-img-wrap" class="modal-legend-wrap">
+                <img id="modal-legend-img" class="modal-legend-img" alt="Colorbar legend" src="">
+              </div>
+              <p id="modal-legend-notes" class="modal-legend-notes"></p>
+            </div>
+            <div class="modal-meta-section">
+              <h4 class="modal-meta-heading">Acoustic Translation</h4>
+              <div class="modal-tags-grid">
+                <div class="modal-tag-item">
+                  <span class="modal-tag-label">Acoustic Voice</span>
+                  <strong id="modal-obs-voice" class="modal-tag-value">Pad Synth</strong>
+                </div>
+                <div class="modal-tag-item">
+                  <span class="modal-tag-label">Variable &amp; Range</span>
+                  <strong id="modal-obs-variable" class="modal-tag-value">—</strong>
+                </div>
+                <div class="modal-tag-item">
+                  <span class="modal-tag-label">Sonification Method</span>
+                  <strong id="modal-obs-technique" class="modal-tag-value">—</strong>
+                </div>
+              </div>
+            </div>
+            <div class="modal-actions-footer">
+              <button type="button" id="btn-modal-sonify-now" class="btn btn-primary btn-lg btn-block">
+                ▶ Sonify This Observation Now
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Tone.js is vendored (UMD, exposes global `Tone`). Only web/js/audio/** may touch it. -->
+  <script src="vendor/Tone.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
