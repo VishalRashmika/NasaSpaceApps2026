@@ -449,3 +449,47 @@ test("Improved Information Menus Cards: HTML shell elements and CSS rules audit"
   assert.match(css, /\.modal-mapping-table\b/, "CSS must define .modal-mapping-table");
   assert.match(css, /\.modal-tags-grid\b/, "CSS must define .modal-tags-grid");
 });
+
+test("Sonification menu right side menu components layout: non-overlapping and overflow protection audit", () => {
+  // 1. Sidebar container layout protection
+  assert.match(css, /\.sidebar-pane\s*\{[^}]*min-width:\s*0/i, "Sidebar must have min-width: 0 to prevent grid blowout");
+  assert.match(css, /\.sidebar-pane\s*\{[^}]*overflow:\s*hidden/i, "Sidebar must contain outer overflow");
+  assert.match(css, /\.tab-panel\s*\{[^}]*overflow-y:\s*auto/i, "Tab panel must provide contained vertical scroll");
+  assert.match(css, /\.tab-panel\s*\{[^}]*overflow-x:\s*hidden/i, "Tab panel must prevent horizontal breakout");
+
+  // 2. Tab list sizing and overflow
+  assert.match(css, /\.tab-list\b/, "CSS must define .tab-list");
+  assert.match(css, /\.tab-list\s*\.tab-btn\s*\{[^}]*text-overflow:\s*ellipsis/i, "Tab buttons must truncate gracefully");
+
+  // 3. Observations gallery card & thumbnail sizing
+  assert.match(css, /\.gallery-category-header\b/, "CSS must define .gallery-category-header");
+  assert.match(css, /\.sample-card\s*\{[^}]*min-width:\s*0/i, "Sample card must have min-width: 0");
+  assert.match(css, /\.sample-thumb\s*\{[^}]*object-fit:\s*cover/i, "Sample thumb must have object-fit: cover");
+  assert.match(css, /\.sample-title\s*\{[^}]*text-overflow:\s*ellipsis/i, "Sample title must prevent overflow");
+
+  // 4. Upload & Legend config grid and accordion
+  assert.match(css, /\.config-card-grid\s*\{[^}]*grid-template-columns/i, "Config card grid must define grid template columns");
+  assert.match(css, /\.config-item\s*\{[^}]*min-width:\s*0/i, "Config item must have min-width: 0");
+  assert.match(css, /\.config-mapping-accordion\b/, "CSS must define .config-mapping-accordion");
+  assert.match(css, /\.cat-sound-mappings-container\s*\{[^}]*overflow-x:\s*auto/i, "Mappings table container must scroll horizontally");
+  assert.match(css, /\.sound-mapping-table\s*\{[^}]*border-collapse:\s*collapse/i, "Sound mapping table must collapse borders");
+
+  // 5. Form controls layout
+  assert.match(css, /\.coord-grid\s*\{[^}]*grid-template-columns/i, "Coord grid must define grid layout");
+  assert.match(css, /\.form-row\s*\{[^}]*grid-template-columns/i, "Form row must define grid layout");
+  assert.match(css, /\.checkbox-group\s*\{[^}]*flex-direction:\s*row/i, "Checkbox group must align horizontally");
+
+  // 6. How to Listen & Explainer table layout
+  assert.match(css, /\.listen-cat-title\b/, "CSS must define .listen-cat-title");
+  assert.match(css, /\.listen-cat-mapping-wrap\s*\{[^}]*overflow-x:\s*auto/i, "Listen mapping wrap must scroll horizontally");
+  assert.match(css, /\.mapping-table\s*\{[^}]*border-collapse:\s*collapse/i, "Explainer mapping table must be styled");
+
+  // 7. Fidelity list layout
+  assert.match(css, /\.fidelity-content\b/, "CSS must define .fidelity-content");
+  assert.match(css, /\.meta-list\s*\{[^}]*grid-template-columns/i, "Meta list must have defined grid layout");
+
+  // 8. Dataset detail right column gallery
+  assert.match(css, /\.cat-gallery-col\b/, "CSS must define .cat-gallery-col");
+  assert.match(css, /\.example-card-thumb\s*\{[^}]*object-fit:\s*cover/i, "Example card thumb must have object-fit: cover");
+  assert.match(css, /\.example-card-overlay\b/, "CSS must define .example-card-overlay");
+});
