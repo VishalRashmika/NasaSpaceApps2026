@@ -2,7 +2,8 @@
 
 > Space Apps Challenge 2026: *The Earth Information Jukebox*  
 > **Target Video Duration:** 3 minutes (180 seconds)  
-> **Presenters:** Earth Jukebox Team
+> **Presenters:** Earth Jukebox Team  
+> **Video Link:** [YouTube Demonstration Video (https://youtu.be/olTJtKZuKnM)](https://youtu.be/olTJtKZuKnM)
 
 ---
 
