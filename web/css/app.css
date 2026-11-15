@@ -813,7 +813,11 @@ main {
 .category-filter-bar {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.6rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.85rem;
 }
 
 .filter-chips-row {
@@ -824,40 +828,50 @@ main {
 }
 
 .filter-label {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--fg-subtle);
-  margin-right: 0.25rem;
+  margin-right: 0.2rem;
+  white-space: nowrap;
 }
 
 .filter-chips-list {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.35rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .filter-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.35rem 0.75rem;
-  min-height: 44px;
-  min-width: 44px;
+  padding: 0.2rem 0.6rem;
+  min-height: 30px;
   background: var(--bg-page);
   border: 1px solid var(--border);
   border-radius: 9999px;
   color: var(--fg-muted);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .filter-chip:hover {
   background: var(--bg-surface);
   color: var(--fg);
   border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.filter-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .filter-chip.active {
@@ -865,13 +879,24 @@ main {
   color: #ffffff;
   border-color: var(--primary);
   font-weight: 600;
+  box-shadow: 0 1px 3px rgba(2, 132, 199, 0.25);
+}
+
+.filter-chip .chip-text {
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .chip-count {
-  font-size: 0.68rem;
-  padding: 0.05rem 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.05rem 0.35rem;
   border-radius: 9999px;
   background: rgba(0, 0, 0, 0.08);
+  min-width: 1.15rem;
+  text-align: center;
+  display: inline-block;
+  line-height: 1.2;
 }
 
 .filter-chip.active .chip-count {

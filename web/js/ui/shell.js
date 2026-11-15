@@ -11,8 +11,8 @@ export class ShellUI {
     this.qualityBadge = document.getElementById("quality-badge");
     this.fallbackBanner = document.getElementById("fallback-banner");
 
-    this.tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
-    this.tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
+    this.tabButtons = Array.from(document.querySelectorAll(".sidebar-pane .tab-btn"));
+    this.tabPanels = Array.from(document.querySelectorAll(".sidebar-pane .tab-panel"));
 
     this._initTheme();
     this._initTabs();

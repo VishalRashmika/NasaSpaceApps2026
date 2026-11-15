@@ -7,6 +7,7 @@ import {
   formatMarkdownToHtml,
   formatObservationDisplayTitle,
   getMissionLabel,
+  formatCategoryFilterLabel,
 } from "../js/ui/category-selection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -275,4 +276,55 @@ This is **temperature** data.
   assert.match(htmlOut, /<li>First observation<\/li>/, "Should convert * to <li>");
   assert.match(htmlOut, /<table class=["']md-table["']>/, "Should parse table");
   assert.match(htmlOut, /Temperature/, "Table must contain row data");
+});
+
+test("formatCategoryFilterLabel formats clean and concise filter card labels", () => {
+  // Test raw dataset headings and directory ids
+  assert.equal(
+    formatCategoryFilterLabel({ id: "GIOS Aerols", title: "Dataset Information: NASA GEOS Aerosols (2025)" }),
+    "Aerosols"
+  );
+  assert.equal(
+    formatCategoryFilterLabel({ id: "Geos-fp-precipitation-and-clouds", title: "NASA Dataset: GEOS-FP Precipitation and Clouds" }),
+    "Precipitation & Clouds"
+  );
+  assert.equal(
+    formatCategoryFilterLabel({ id: "Hubble+IOTD", title: "NASA Dataset Context: Deep Space Imagery & Sonification" }),
+    "Deep Space"
+  );
+  assert.equal(
+    formatCategoryFilterLabel({ id: "Near-Surface-Temperature", title: "NASA GEOS-FP: Near-Surface Temperature (T2M)" }),
+    "Temperature"
+  );
+  assert.equal(
+    formatCategoryFilterLabel({ id: "Near-Surface-Wind-Speed", title: "NASA Dataset: GEOS-FP Near-Surface Wind Speed" }),
+    "Wind Speed"
+  );
+  assert.equal(
+    formatCategoryFilterLabel({ id: "lightningEvents", title: "Dataset Overview: Lightning Events Detected from the ISS (2017-2023)" }),
+    "ISS Lightning"
+  );
+});
+
+test("Reduced size and compact layout for filter cards and toolbar in CSS", () => {
+  // Compact filter chips sizing
+  assert.match(css, /\.filter-chip\s*\{[^}]*min-height:\s*30px/i, "Filter chip must have compact height");
+  assert.match(css, /\.filter-chip\s*\{[^}]*white-space:\s*nowrap/i, "Filter chip text must not wrap awkwardly");
+  assert.match(css, /\.filter-chip\s*\.chip-text\b/, "CSS must define .chip-text styling");
+  assert.match(css, /\.chip-count\b/, "CSS must define .chip-count pill");
+  assert.match(css, /\.category-filter-bar\b/, "CSS must define .category-filter-bar");
+});
+
+test("Sidebar tabs in ShellUI are isolated to .sidebar-pane to prevent hiding the gallery", () => {
+  const shellJs = fs.readFileSync(path.resolve(__dirname, "../js/ui/shell.js"), "utf-8");
+  assert.match(
+    shellJs,
+    /querySelectorAll\(["']\.sidebar-pane\s+\.tab-btn["']\)/,
+    "ShellUI tab buttons must be scoped to .sidebar-pane"
+  );
+  assert.match(
+    shellJs,
+    /querySelectorAll\(["']\.sidebar-pane\s+\.tab-panel["']\)/,
+    "ShellUI tab panels must be scoped to .sidebar-pane"
+  );
 });

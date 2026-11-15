@@ -216,7 +216,7 @@ class App {
     if (this.btnGotoCategories) {
       this.btnGotoCategories.addEventListener("click", () => {
         this.showCategoryView();
-        this.categorySelection.showCategoryList();
+        this.categorySelection.showCategoryList("gallery");
       });
     }
     if (this.btnGotoProcessing) {
@@ -229,14 +229,14 @@ class App {
           this.categorySelection.showCustomTypeSelection();
         } else {
           this.showCategoryView();
-          this.categorySelection.showCategoryList();
+          this.categorySelection.showCategoryList("gallery");
         }
       });
     }
     if (this.btnSwitchCategory) {
       this.btnSwitchCategory.addEventListener("click", () => {
         this.showCategoryView();
-        this.categorySelection.showCategoryList();
+        this.categorySelection.showCategoryList("gallery");
       });
     }
   }
@@ -358,7 +358,7 @@ class App {
       },
       () => {
         this.showCategoryView();
-        this.categorySelection.showCategoryList();
+        this.categorySelection.showCategoryList("gallery");
       }
     );
 

@@ -27,6 +27,44 @@ function getCategoryIcon(catId) {
   return CATEGORY_ICONS.default;
 }
 
+/**
+ * Produce concise, clean category labels for gallery filter chips/cards.
+ * Trims verbose markdown headings and mission boilerplate into clean names.
+ */
+export function formatCategoryFilterLabel(cat) {
+  if (!cat) return "";
+  const catId = (cat.id || "").toLowerCase();
+  const title = (cat.title || "").toLowerCase();
+
+  if (catId.includes("aerosol") || catId.includes("aerols") || title.includes("aerosol")) {
+    return "Aerosols";
+  }
+  if (catId.includes("precip") || catId.includes("cloud") || title.includes("precipitation")) {
+    return "Precipitation & Clouds";
+  }
+  if (catId.includes("hubble") || catId.includes("deep") || title.includes("deep space") || title.includes("hubble")) {
+    return "Deep Space";
+  }
+  if (catId.includes("temp") || title.includes("temperature")) {
+    return "Temperature";
+  }
+  if (catId.includes("wind") || title.includes("wind speed")) {
+    return "Wind Speed";
+  }
+  if (catId.includes("lightning") || title.includes("lightning")) {
+    return "ISS Lightning";
+  }
+
+  let cleaned = (cat.title || cat.id || "")
+    .replace(/^Dataset\s+(Information|Overview|Context):\s*/i, "")
+    .replace(/^NASA\s+Dataset\s*(Context)?:\s*/i, "")
+    .replace(/^NASA\s+GEOS-FP:\s*/i, "")
+    .replace(/\s*\(\d{4}(-\d{4})?\)\s*$/, "")
+    .trim();
+
+  return cleaned || cat.title || cat.id;
+}
+
 export const CUSTOM_IMAGE_TYPES = [
   {
     id: "GIOS Aerols",
@@ -465,6 +503,23 @@ export class CategorySelectionUI {
       this.tabModeCategories.addEventListener("click", () => this.setViewMode("categories"));
     }
 
+    const modeTabs = [this.tabModeGallery, this.tabModeCategories].filter(Boolean);
+    modeTabs.forEach((tab, idx) => {
+      tab.addEventListener("keydown", (e) => {
+        let targetIdx = null;
+        if (e.key === "ArrowRight") {
+          targetIdx = (idx + 1) % modeTabs.length;
+        } else if (e.key === "ArrowLeft") {
+          targetIdx = (idx - 1 + modeTabs.length) % modeTabs.length;
+        }
+        if (targetIdx !== null) {
+          e.preventDefault();
+          modeTabs[targetIdx].focus();
+          modeTabs[targetIdx].click();
+        }
+      });
+    });
+
     if (this.gallerySearchInput) {
       this.gallerySearchInput.addEventListener("input", (e) => {
         this.searchQuery = e.target.value.trim();
@@ -623,24 +678,63 @@ export class CategorySelectionUI {
     if (this.categoryFilterBar) {
       this.categoryFilterBar.classList.toggle("hidden", !isGallery);
     }
+
+    if (this.detailPanel) {
+      this.detailPanel.classList.add("hidden");
+    }
+    if (this.customTypeSection) {
+      this.customTypeSection.classList.add("hidden");
+    }
+    if (this.introCard) {
+      this.introCard.classList.remove("hidden");
+    }
+    if (this.openingGalleryControls) {
+      this.openingGalleryControls.classList.remove("hidden");
+    }
+  }
+
+  _attachFilterChipsKeyNav() {
+    if (!this.filterChipsList) return;
+    const chips = Array.from(this.filterChipsList.querySelectorAll(".filter-chip"));
+    chips.forEach((chip, idx) => {
+      chip.addEventListener("keydown", (e) => {
+        let nextIdx = null;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+          nextIdx = (idx + 1) % chips.length;
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          nextIdx = (idx - 1 + chips.length) % chips.length;
+        } else if (e.key === "Home") {
+          nextIdx = 0;
+        } else if (e.key === "End") {
+          nextIdx = chips.length - 1;
+        }
+        if (nextIdx !== null) {
+          e.preventDefault();
+          chips[nextIdx].focus();
+          chips[nextIdx].click();
+        }
+      });
+    });
   }
 
   renderFilterChips() {
     if (!this.filterChipsList) return;
     this.filterChipsList.innerHTML = "";
 
-    // "All" chip
+    // "All Imagery" chip
     const allChip = document.createElement("button");
     allChip.type = "button";
     allChip.className = `filter-chip ${this.currentCategoryFilter === "all" ? "active" : ""}`;
     allChip.setAttribute("role", "radio");
     allChip.setAttribute("aria-checked", String(this.currentCategoryFilter === "all"));
-    allChip.innerHTML = `All Imagery <span class="chip-count">${this.allImages.length}</span>`;
+    allChip.setAttribute("aria-label", `All Imagery: ${this.allImages.length} observations`);
+    allChip.title = `All Imagery (${this.allImages.length} observations)`;
+    allChip.innerHTML = `<span class="chip-text">All Imagery</span> <span class="chip-count">${this.allImages.length}</span>`;
     allChip.addEventListener("click", () => {
       this.currentCategoryFilter = "all";
+      this.setViewMode("gallery");
       this.renderFilterChips();
       this.renderOpeningGallery();
-      if (this.currentViewMode !== "gallery") this.setViewMode("gallery");
     });
     this.filterChipsList.appendChild(allChip);
 
@@ -649,25 +743,29 @@ export class CategorySelectionUI {
       const imgCount = Array.isArray(cat.images) ? cat.images.length : 0;
       if (imgCount === 0) return;
 
-      const icon = getCategoryIcon(cat.id);
       const isSelected = this.currentCategoryFilter === cat.id;
+      const shortLabel = formatCategoryFilterLabel(cat);
 
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = `filter-chip ${isSelected ? "active" : ""}`;
       chip.setAttribute("role", "radio");
       chip.setAttribute("aria-checked", String(isSelected));
-      chip.innerHTML = `<span aria-hidden="true">${icon}</span> ${cat.title} <span class="chip-count">${imgCount}</span>`;
+      chip.setAttribute("aria-label", `${shortLabel}: ${imgCount} observation${imgCount === 1 ? "" : "s"}`);
+      chip.title = `${cat.title} (${imgCount} observation${imgCount === 1 ? "" : "s"})`;
+      chip.innerHTML = `<span class="chip-text">${shortLabel}</span> <span class="chip-count">${imgCount}</span>`;
 
       chip.addEventListener("click", () => {
-        this.currentCategoryFilter = cat.id;
+        this.currentCategoryFilter = isSelected ? "all" : cat.id;
+        this.setViewMode("gallery");
         this.renderFilterChips();
         this.renderOpeningGallery();
-        if (this.currentViewMode !== "gallery") this.setViewMode("gallery");
       });
 
       this.filterChipsList.appendChild(chip);
     });
+
+    this._attachFilterChipsKeyNav();
   }
 
   renderOpeningGallery() {
@@ -1252,17 +1350,24 @@ export class CategorySelectionUI {
     }
   }
 
-  showCategoryList() {
+  showCategoryList(preferredMode = "gallery") {
     this.activeCategory = null;
     this.selectedImage = null;
 
     if (this.customTypeSection) this.customTypeSection.classList.add("hidden");
     if (this.introCard) this.introCard.classList.remove("hidden");
     if (this.openingGalleryControls) this.openingGalleryControls.classList.remove("hidden");
-    if (this.openingGallerySection) this.openingGallerySection.classList.remove("hidden");
     if (this.detailPanel) this.detailPanel.classList.add("hidden");
 
-    this.setViewMode(this.currentViewMode || "gallery");
+    this.setViewMode(preferredMode);
+
+    if (this.categories.length === 0) {
+      this.load();
+    } else {
+      this.renderFilterChips();
+      this.renderOpeningGallery();
+      this.renderCategoryCards();
+    }
   }
 
   showCustomTypeSelection() {
