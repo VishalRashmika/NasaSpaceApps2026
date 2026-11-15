@@ -281,7 +281,7 @@ async def analyze_endpoint(
 
     # Persist in analysis_store
     if services.analysis_store is not None:
-        services.analysis_store.save(analysis_id, field)
+        services.analysis_store.save(analysis_id, field, image_bytes=raw_bytes, map_box=mbox)
 
     # Generate preview PNG
     field_preview_png = ""

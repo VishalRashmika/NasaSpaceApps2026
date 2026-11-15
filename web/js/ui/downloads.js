@@ -10,6 +10,7 @@ export class DownloadsUI {
     this.menu = document.getElementById("download-menu");
     this.playWavBtn = document.getElementById("btn-play-wav");
     this.downloadWavLink = document.getElementById("link-download-wav");
+    this.downloadMp4Link = document.getElementById("link-download-mp4");
     this.downloadMidLink = document.getElementById("link-download-mid");
     this.downloadJsonLink = document.getElementById("link-download-json");
     this.audioEl = document.getElementById("rendered-audio");
@@ -65,6 +66,10 @@ export class DownloadsUI {
       if (this.downloadWavLink) {
         this.downloadWavLink.href = getRenderUrl(analysisId, "wav", skin, nCols);
         this.downloadWavLink.setAttribute("download", `earth_jukebox_${analysisId}.wav`);
+      }
+      if (this.downloadMp4Link) {
+        this.downloadMp4Link.href = getRenderUrl(analysisId, "mp4", skin, nCols);
+        this.downloadMp4Link.setAttribute("download", `earth_jukebox_${analysisId}.mp4`);
       }
       if (this.downloadMidLink) {
         this.downloadMidLink.href = getRenderUrl(analysisId, "mid", skin, nCols);

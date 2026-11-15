@@ -21,6 +21,7 @@ from earth_jukebox.application.ports import (
     MidiExporter,
     Mp3Exporter,
     SampleRepository,
+    VideoExporter,
 )
 from earth_jukebox.application.settings import Settings
 
@@ -41,3 +42,4 @@ class Services:
     frame_extractor: FrameExtractor | None = None
     mp3_exporter: Mp3Exporter | None = None
     category_repository: CategoryRepository | None = None
+    video_exporter: VideoExporter | None = None

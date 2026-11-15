@@ -26,7 +26,7 @@ Requires Python 3.11+ and Node 20+ (for `make web-test` only). Pure vanilla ES m
 - **Deterministic Sonification:** Longitude → time, latitude → voice/pan, spatial gradient → rhythm density, variance → tempo, rests for masked areas.
 - **Cultural Musical Skins:** Western Neutral, North Indian Classical (Hindustani ragas), and Traditional Sri Lankan (*Ravana* / *Vannam*) with strict mathematical information invariance.
 - **Sensory Accessibility (WCAG 2.1 AA/AAA):** 2D tactile Explore mode, Web Speech coordinate readouts, Web Haptics intensity pulses, and screen-reader polite announcements.
-- **Multi-Format Export:** Studio-grade WAV (44.1 kHz 16-bit PCM), Type-1 Standard MIDI with pitch bends, and Score JSON.
+- **Multi-Format Export:** Studio-grade WAV (44.1 kHz 16-bit PCM), Type-1 Standard MIDI with pitch bends, synchronized MP4 video with animated slider, and Score JSON.
 
 ## Documentation & NASA Space Apps Submission Pack
 

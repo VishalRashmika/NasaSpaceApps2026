@@ -58,9 +58,10 @@ test("F-075 & F-076 AC: Player has audio legend, export buttons, and scrubber", 
     "Audio legend button must be initially aria-disabled='true'"
   );
 
-  // F-075: Export buttons
+  // F-075 & F-109: Export buttons
   assert.match(html, /id=["']btn-play-wav["']/i, "Must have Play Rendered WAV button");
   assert.match(html, /link-download-wav/i, "Must have Download WAV link");
+  assert.match(html, /link-download-mp4/i, "Must have Download Video (MP4) link");
   assert.match(html, /link-download-mid/i, "Must have Download MIDI link");
   assert.match(html, /link-download-json/i, "Must have Download Score JSON link");
 

@@ -18,6 +18,7 @@ from earth_jukebox.domain.models import (
     GeoExtent,
     LegendSpec,
     Orientation,
+    PixelBox,
     RecoveryMode,
     RecoveryQuality,
     ScalarField,
@@ -35,12 +36,28 @@ class FileSystemAnalysisStore(AnalysisStore):
         self._dir = cache_dir / "analysis"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._memory_cache: dict[str, ScalarField] = {}
+        self._image_cache: dict[str, bytes] = {}
+        self._map_box_cache: dict[str, PixelBox | None] = {}
 
-    def save(self, analysis_id: str, field: ScalarField) -> None:
+    def save(
+        self,
+        analysis_id: str,
+        field: ScalarField,
+        image_bytes: bytes | None = None,
+        map_box: PixelBox | None = None,
+    ) -> None:
         if not ANALYSIS_ID_PATTERN.match(analysis_id):
             raise ValueError(f"invalid analysis_id format: '{analysis_id}'")
 
         self._memory_cache[analysis_id] = field
+
+        if image_bytes is not None:
+            self._image_cache[analysis_id] = image_bytes
+            img_file = self._dir / f"{analysis_id}.img"
+            img_file.write_bytes(image_bytes)
+
+        if map_box is not None:
+            self._map_box_cache[analysis_id] = map_box
 
         meta = {
             "legend": {
@@ -72,6 +89,14 @@ class FileSystemAnalysisStore(AnalysisStore):
                 "warnings": list(field.quality.warnings),
             },
             "source_hash": field.source_hash,
+            "map_box": {
+                "x": map_box.x,
+                "y": map_box.y,
+                "w": map_box.w,
+                "h": map_box.h,
+            }
+            if map_box
+            else None,
         }
 
         target_file = self._dir / f"{analysis_id}.npz"
@@ -80,6 +105,42 @@ class FileSystemAnalysisStore(AnalysisStore):
             values=field.values,
             meta=json.dumps(meta),
         )
+
+    def load_image(self, analysis_id: str) -> bytes | None:
+        if not ANALYSIS_ID_PATTERN.match(analysis_id):
+            return None
+        if analysis_id in self._image_cache:
+            return self._image_cache[analysis_id]
+        img_file = self._dir / f"{analysis_id}.img"
+        if img_file.is_file():
+            content = img_file.read_bytes()
+            self._image_cache[analysis_id] = content
+            return content
+        return None
+
+    def load_map_box(self, analysis_id: str) -> PixelBox | None:
+        if not ANALYSIS_ID_PATTERN.match(analysis_id):
+            return None
+        if analysis_id in self._map_box_cache:
+            return self._map_box_cache[analysis_id]
+        target_file = self._dir / f"{analysis_id}.npz"
+        if target_file.is_file():
+            try:
+                with np.load(target_file, allow_pickle=False) as data:
+                    meta = json.loads(str(data["meta"]))
+                    mb = meta.get("map_box")
+                    if mb:
+                        box = PixelBox(
+                            x=int(mb["x"]),
+                            y=int(mb["y"]),
+                            w=int(mb["w"]),
+                            h=int(mb["h"]),
+                        )
+                        self._map_box_cache[analysis_id] = box
+                        return box
+            except Exception:
+                pass
+        return None
 
     def load(self, analysis_id: str) -> ScalarField:
         if not ANALYSIS_ID_PATTERN.match(analysis_id):

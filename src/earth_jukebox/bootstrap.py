@@ -25,6 +25,7 @@ from earth_jukebox.infrastructure.storage.categories import (
     extract_category_lut,
 )
 from earth_jukebox.infrastructure.storage.samples import FileSystemSampleRepository
+from earth_jukebox.infrastructure.video import FfmpegVideoExporter
 from earth_jukebox.infrastructure.vision.autodetect import HeuristicColorbarDetector
 from earth_jukebox.infrastructure.vision.decoder import PillowImageDecoder
 from earth_jukebox.infrastructure.vision.frames import VisionFrameExtractor
@@ -68,6 +69,7 @@ def build_services(settings: Settings | None = None) -> Services:
         working_max_dimension=settings.working_max_dimension,
     )
     mp3_exporter = FfmpegMp3Exporter()
+    video_exporter = FfmpegVideoExporter()
     cat_dir = settings.dataset_dir or (PROJECT_ROOT / "Dataset")
     category_repo = FileSystemCategoryRepository(dataset_dir=cat_dir)
 
@@ -102,6 +104,7 @@ def build_services(settings: Settings | None = None) -> Services:
         frame_extractor=frame_extractor,
         mp3_exporter=mp3_exporter,
         category_repository=category_repo,
+        video_exporter=video_exporter,
     )
 
 

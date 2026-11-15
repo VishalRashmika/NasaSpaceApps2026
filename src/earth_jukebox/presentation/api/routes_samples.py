@@ -194,7 +194,12 @@ def analyze_sample(
     )
 
     if services.analysis_store is not None:
-        services.analysis_store.save(analysis_id, field)
+        services.analysis_store.save(
+            analysis_id,
+            field,
+            image_bytes=raw_bytes,
+            map_box=sample.map_box,
+        )
 
     field_preview_png = ""
     if services.field_preview_renderer is not None:

@@ -425,11 +425,21 @@ class FieldPreviewRenderer(Protocol):
 class AnalysisStore(Protocol):
     """Persists recovered fields between /analyze and /sonify calls."""
 
-    def save(self, analysis_id: str, field: ScalarField) -> None: ...
+    def save(
+        self,
+        analysis_id: str,
+        field: ScalarField,
+        image_bytes: bytes | None = None,
+        map_box: PixelBox | None = None,
+    ) -> None: ...
 
     def load(self, analysis_id: str) -> ScalarField:
         """Raises NotFoundError if unknown."""
         ...
+
+    def load_image(self, analysis_id: str) -> bytes | None: ...
+
+    def load_map_box(self, analysis_id: str) -> PixelBox | None: ...
 
 
 class FrameExtractor(Protocol):
@@ -443,6 +453,21 @@ class Mp3Exporter(Protocol):
 
     def export_mp3(self, wav_bytes: bytes) -> bytes:
         """Convert WAV audio bytes to MP3 audio bytes using ffmpeg."""
+        ...
+
+
+class VideoExporter(Protocol):
+    def is_available(self) -> bool: ...
+
+    def export_video(
+        self,
+        image_bytes: bytes,
+        wav_bytes: bytes,
+        score: Score,
+        map_box: PixelBox | None = None,
+        fps: int = 30,
+    ) -> bytes:
+        """Render MP4 video with image, moving slider/playhead, and synchronized audio."""
         ...
 
 

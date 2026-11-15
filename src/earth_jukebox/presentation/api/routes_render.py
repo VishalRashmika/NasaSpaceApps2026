@@ -135,6 +135,58 @@ def render_mp3(
     )
 
 
+@router.get("/render/{analysis_id}.mp4")
+def render_mp4(
+    analysis_id: str,
+    services: Annotated[Services, Depends(get_services)],
+    skin: Annotated[str, Query()] = "neutral",
+    n_cols: Annotated[int, Query()] = 48,
+) -> Response:
+    """Render sonification to MP4 video with image and moving slider (F-109)."""
+    if services.audio_renderer is None or services.analysis_store is None:
+        raise NotFoundError("Required rendering services unavailable")
+
+    if services.video_exporter is None or not services.video_exporter.is_available():
+        raise StarletteHTTPException(
+            status_code=501,
+            detail="Video export is unavailable: ffmpeg is not installed on system PATH",
+        )
+
+    score = _build_score(analysis_id, skin, n_cols, services)
+    wav_bytes = services.audio_renderer.render_wav(score)
+
+    image_bytes = services.analysis_store.load_image(analysis_id)
+    map_box = services.analysis_store.load_map_box(analysis_id)
+
+    if image_bytes is None and services.field_preview_renderer is not None:
+        field = services.analysis_store.load(analysis_id)
+        first_2d = field
+        if field.values.ndim > 2:
+            import dataclasses
+
+            first_2d = dataclasses.replace(field, values=field.values[0])
+        image_bytes = services.field_preview_renderer.render_preview_png(first_2d, width=800)
+
+    if image_bytes is None:
+        raise NotFoundError(f"Image data for analysis '{analysis_id}' not found")
+
+    mp4_bytes = services.video_exporter.export_video(
+        image_bytes=image_bytes,
+        wav_bytes=wav_bytes,
+        score=score,
+        map_box=map_box,
+    )
+
+    return Response(
+        content=mp4_bytes,
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": f'attachment; filename="earth_jukebox_{analysis_id}.mp4"',
+        },
+    )
+
+
 @router.get("/legend-sound/{analysis_id}.wav")
 def render_legend_wav(
     analysis_id: str,

@@ -164,3 +164,43 @@ def test_f044_render_mp3_success(tmp_path: Path) -> None:
     is_id3 = r.content.startswith(b"ID3")
     is_sync = r.content[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
     assert is_id3 or is_sync
+
+
+def test_f109_render_mp4_returns_501_when_unavailable(tmp_path: Path) -> None:
+    # F-109 AC: absent video exporter -> graceful 501-style problem response
+    from dataclasses import replace
+
+    from earth_jukebox.bootstrap import build_services
+    from earth_jukebox.presentation.api.app import create_app
+
+    settings = build_settings(tmp_path)
+    base_services = build_services(settings)
+    services = replace(base_services, video_exporter=None)
+    client = TestClient(create_app(services))
+    aid = _analyze_image(client)
+
+    r = client.get(f"/api/render/{aid}.mp4")
+    assert r.status_code == 501
+    prob = r.json()
+    assert prob["code"] == "not_implemented"
+
+
+def test_f109_render_mp4_success(tmp_path: Path) -> None:
+    # F-109 AC: if ffmpeg on PATH, render video with image + slider and audio
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed on system")
+
+    client = _make_client(tmp_path)
+    aid = _analyze_image(client)
+
+    r = client.get(f"/api/render/{aid}.mp4?skin=neutral&n_cols=32")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("video/mp4")
+    assert "Cache-Control" in r.headers
+    assert "public" in r.headers["Cache-Control"]
+    assert f'filename="earth_jukebox_{aid}.mp4"' in r.headers.get("Content-Disposition", "")
+    assert len(r.content) > 0
+    # ISO base media file format (MP4) contains "ftyp" box within first 32 bytes
+    assert b"ftyp" in r.content[:32]

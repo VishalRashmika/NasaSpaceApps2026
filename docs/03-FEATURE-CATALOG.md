@@ -414,3 +414,11 @@ Category-driven input data collection supplying predefined metadata automaticall
 - AC4: Category UI presentation: Each category UI (in detail view and processing view) displays its sonification technique description, data-to-sound mapping breakdown, color legend (where present), and predefined configuration summary.
 - AC5: Pipeline & backend consistency: Category-specific metadata and mappings are strictly integrated with and verified against the existing audio-processing pipeline (inversion, variable category, and synth voice generation) without breaking user custom image uploads or preloaded examples.
 
+### F-109 — Video export with animated slider [I+P+W] (M)
+Exports sonification to an MP4 video combining NASA observation imagery, an animated playhead/slider line, and synchronized sonified audio.
+- AC1: Endpoint `GET /api/render/{analysis_id}.mp4` renders an H.264/AAC MP4 video containing the observation image, moving slider line, and sonified audio.
+- AC2: Video playhead/slider is precisely synchronized with audio playback over the duration of the track.
+- AC3: If ffmpeg is absent, returns graceful 501-style problem response.
+- AC4: Export / Downloads menu in the web interface provides a direct download option for the generated MP4 video.
+
+
