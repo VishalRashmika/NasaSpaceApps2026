@@ -77,7 +77,7 @@ export class LegendSweepUI {
       this.isPlaying = false;
       if (this.btn) {
         this.btn.disabled = false;
-        this.btn.innerHTML = `<span class="btn-icon-symbol">🎵</span> Audio Legend`;
+        this.btn.innerHTML = `<span class="btn-icon-symbol"></span> Audio Legend`;
       }
     }
   }

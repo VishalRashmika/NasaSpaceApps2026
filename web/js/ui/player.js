@@ -132,10 +132,10 @@ export class PlayerUI {
   updatePlayBtn(isPlaying) {
     if (!this.playBtn) return;
     if (isPlaying) {
-      this.playBtn.innerHTML = `<span class="btn-icon-symbol">⏸</span> Pause`;
+      this.playBtn.innerHTML = `<span class="btn-icon-symbol"></span> Pause`;
       this.playBtn.setAttribute("aria-label", "Pause audio");
     } else {
-      this.playBtn.innerHTML = `<span class="btn-icon-symbol">▶</span> Play`;
+      this.playBtn.innerHTML = `<span class="btn-icon-symbol"></span> Play`;
       this.playBtn.setAttribute("aria-label", "Play audio");
     }
   }

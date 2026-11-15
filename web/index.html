@@ -26,7 +26,7 @@
       </div>
       <div class="header-actions">
         <span id="status" class="status-badge" role="status" aria-live="polite">Backend checking…</span>
-        <button id="theme-toggle" class="btn btn-icon" type="button" aria-label="Toggle color theme" title="Toggle color theme">🌓</button>
+        <button id="theme-toggle" class="btn btn-icon theme-toggle-btn" type="button" aria-label="Toggle color theme" title="Toggle color theme"><span class="theme-btn-text">Theme</span></button>
       </div>
     </div>
   </header>
@@ -59,30 +59,93 @@
 
     <!-- View 1: Category Selection Page (appears first) -->
     <section id="view-categories" class="category-selection-view" aria-label="Select Sonification Category">
-      <!-- Category Intro & Prompt -->
+      <!-- Category Intro & Prompt: Gallery First Screen with Upload Option -->
       <div id="category-intro-panel" class="category-intro-card">
         <span class="intro-badge">NASA Earth &amp; Space Science Data</span>
         <h2 class="category-selection-title">What kind of image would you like to sonify?</h2>
         <p class="category-selection-subtitle">
-          Select an authentic NASA Earth or deep-space observation to recover physical measurements and translate them into acoustic soundscapes — or upload your own scientific map.
+          Explore and sonify authentic NASA Earth and deep-space observations from the gallery below — or choose to upload and process your own custom scientific image.
         </p>
         <div class="direct-upload-prompt">
           <span>Have your own NASA or scientific map?</span>
           <button type="button" id="btn-quick-custom-upload" class="btn btn-sm btn-outline">
-            Skip directly to Custom Upload →
+            Upload Custom Image &rarr;
           </button>
         </div>
       </div>
+
+      <!-- Custom Image Type Selection View ("What kind of image would you like to process?") -->
+      <section id="view-custom-upload-type" class="custom-type-view hidden" aria-label="Choose Scientific Image Type to Process">
+        <div class="custom-type-header">
+          <button type="button" id="btn-back-from-type-select" class="btn btn-secondary">
+            &larr; Back to Preloaded Gallery
+          </button>
+          <div class="custom-type-header-content">
+            <span class="intro-badge">Custom Image Processing Workflow</span>
+            <h2 class="custom-type-title">What kind of image would you like to process?</h2>
+            <p class="custom-type-subtitle">
+              Select the scientific category of your image. We will determine whether a color legend is required to extract physical data, and identify the exact acoustic processing logic.
+            </p>
+          </div>
+        </div>
+
+        <div class="custom-type-grid" id="custom-type-grid" role="radiogroup" aria-label="Scientific image categories">
+          <!-- Populated dynamically via JS -->
+        </div>
+
+        <!-- Identified Logic & Legend Decision Panel -->
+        <div id="custom-type-decision-panel" class="custom-type-decision-panel hidden" role="region" aria-label="Identified Sonification Logic and Legend Decision">
+          <div class="decision-card">
+            <div class="decision-card-header">
+              <span class="decision-badge" id="decision-legend-badge">Colorbar Legend Required</span>
+              <h3 id="decision-type-title" class="decision-title">NASA GEOS Aerosols</h3>
+            </div>
+            
+            <div class="decision-card-body">
+              <div class="decision-block">
+                <h4 class="decision-block-heading">Legend Processing Decision</h4>
+                <p id="decision-legend-desc" class="decision-text"></p>
+              </div>
+
+              <div class="decision-block">
+                <h4 class="decision-block-heading">Acoustic &amp; Sonification Logic</h4>
+                <p id="decision-logic-desc" class="decision-text"></p>
+              </div>
+
+              <div class="decision-meta-grid">
+                <div class="decision-meta-item">
+                  <span class="decision-meta-label">Scientific Variable:</span>
+                  <strong id="decision-var-range" class="decision-meta-val">0 to 5 AOD</strong>
+                </div>
+                <div class="decision-meta-item">
+                  <span class="decision-meta-label">Synthesizer Voice:</span>
+                  <strong id="decision-synth-voice" class="decision-meta-val">Atmosphere / Wind</strong>
+                </div>
+                <div class="decision-meta-item">
+                  <span class="decision-meta-label">Legend Extraction:</span>
+                  <strong id="decision-legend-status" class="decision-meta-val">Required</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="decision-actions">
+              <button type="button" id="btn-proceed-to-custom-upload" class="btn btn-primary btn-lg">
+                Proceed to Upload Screen &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- Opening View Controls: Mode Switcher & Category Filters -->
       <div id="opening-view-controls" class="opening-view-controls">
         <div class="view-mode-tabs" role="tablist" aria-label="Opening screen display modes">
           <button type="button" class="tab-btn active" id="tab-mode-gallery" role="tab" aria-selected="true" aria-controls="opening-gallery-section">
-            <span class="tab-icon" aria-hidden="true">🖼️</span> Preloaded Observations Gallery
+            <span class="tab-icon" aria-hidden="true"></span> Preloaded Observations Gallery
             <span class="tab-count-pill" id="total-examples-count">0</span>
           </button>
           <button type="button" class="tab-btn" id="tab-mode-categories" role="tab" aria-selected="false" aria-controls="category-cards-grid">
-            <span class="tab-icon" aria-hidden="true">📁</span> Browse by Dataset Context
+            <span class="tab-icon" aria-hidden="true"></span> Browse by Dataset Context
             <span class="tab-count-pill" id="total-categories-count">0</span>
           </button>
         </div>
@@ -96,9 +159,9 @@
           </div>
           <div class="gallery-search-row">
             <div class="gallery-search-wrap">
-              <span class="search-icon" aria-hidden="true">🔍</span>
+              <span class="search-icon" aria-hidden="true"></span>
               <input type="search" id="gallery-search-input" class="gallery-search-input" placeholder="Search observations (e.g. Hubble, Webb, Cat's Eye, Aerosols, Wind, ISS, M30)…" aria-label="Search preloaded NASA observations">
-              <button type="button" id="btn-clear-search" class="btn-clear-search hidden" aria-label="Clear search">✕</button>
+              <button type="button" id="btn-clear-search" class="btn-clear-search hidden" aria-label="Clear search">&times;</button>
             </div>
           </div>
         </div>
@@ -274,16 +337,16 @@
         <div class="player-bar" role="region" aria-label="Audio player">
           <div class="player-controls">
             <button id="btn-play" class="btn btn-primary" type="button" aria-label="Play audio">
-              <span class="btn-icon-symbol">▶</span> Play
+              <span class="btn-icon-symbol"></span> Play
             </button>
             <button id="btn-stop" class="btn btn-secondary" type="button" aria-label="Stop audio">
-              <span class="btn-icon-symbol">⏹</span> Stop
+              <span class="btn-icon-symbol"></span> Stop
             </button>
             <button id="btn-audio-legend" class="btn btn-secondary" type="button" aria-disabled="true" title="Sweep through the colour legend sound">
-              <span class="btn-icon-symbol">🎵</span> Audio Legend
+              <span class="btn-icon-symbol"></span> Audio Legend
             </button>
             <button id="btn-explore" class="btn btn-secondary" type="button" aria-pressed="false" aria-disabled="true" title="Explore map cells with keyboard or touch">
-              <span class="btn-icon-symbol">🧭</span> Explore Mode
+              <span class="btn-icon-symbol"></span> Explore Mode
             </button>
           </div>
 
@@ -394,7 +457,7 @@
                   <p id="upload-config-legend-notes" class="cat-legend-notes"></p>
                 </div>
                 <div id="upload-config-no-legend-notice" class="cat-no-legend-notice hidden">
-                  <span class="info-icon" aria-hidden="true">ℹ️</span>
+                  <span class="info-icon" aria-hidden="true"></span>
                   <p><strong>Direct Spatial &amp; Event Sonification:</strong> This category sonifies spatial coordinates and event occurrences without requiring a continuous gradient colorbar.</p>
                 </div>
                 <h4 class="cat-subheading">Data to Sound Mapping Specification</h4>
@@ -585,7 +648,7 @@
             <span class="modal-badge" id="modal-obs-mission">NASA Observation</span>
             <h3 id="modal-obs-title" class="modal-title">Observation Title</h3>
           </div>
-          <button type="button" class="btn btn-icon btn-close-modal" id="btn-close-obs-modal" aria-label="Close preview" title="Close preview">✕</button>
+          <button type="button" class="btn btn-icon btn-close-modal" id="btn-close-obs-modal" aria-label="Close preview" title="Close preview">&times;</button>
         </div>
         <div class="modal-body modal-preview-body">
           <div class="modal-image-col">
@@ -624,7 +687,7 @@
             </div>
             <div class="modal-actions-footer">
               <button type="button" id="btn-modal-sonify-now" class="btn btn-primary btn-lg btn-block">
-                ▶ Sonify This Observation Now
+                Sonify This Observation Now
               </button>
             </div>
           </div>

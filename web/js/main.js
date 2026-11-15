@@ -211,17 +211,33 @@ class App {
       onError: (msg) => this.shell.showError(msg),
     });
 
+    this.sessionMode = "dataset"; // "dataset" or "upload"
+
     if (this.btnGotoCategories) {
-      this.btnGotoCategories.addEventListener("click", () => this.showCategoryView());
+      this.btnGotoCategories.addEventListener("click", () => {
+        this.showCategoryView();
+        this.categorySelection.showCategoryList();
+      });
     }
     if (this.btnGotoProcessing) {
       this.btnGotoProcessing.addEventListener("click", () => this.showProcessingView());
     }
     if (this.btnBackFromStage) {
-      this.btnBackFromStage.addEventListener("click", () => this.showCategoryView());
+      this.btnBackFromStage.addEventListener("click", () => {
+        if (this.sessionMode === "upload") {
+          this.showCategoryView();
+          this.categorySelection.showCustomTypeSelection();
+        } else {
+          this.showCategoryView();
+          this.categorySelection.showCategoryList();
+        }
+      });
     }
     if (this.btnSwitchCategory) {
-      this.btnSwitchCategory.addEventListener("click", () => this.showCategoryView());
+      this.btnSwitchCategory.addEventListener("click", () => {
+        this.showCategoryView();
+        this.categorySelection.showCategoryList();
+      });
     }
   }
 
@@ -231,6 +247,38 @@ class App {
     await this.gallery.load();
     await this.explainer.load();
     this.showCategoryView();
+  }
+
+  setSessionMode(mode) {
+    this.sessionMode = mode;
+    const tabGallery = document.getElementById("tab-gallery");
+    const panelGallery = document.getElementById("panel-gallery");
+    const tabUpload = document.getElementById("tab-upload");
+    const panelUpload = document.getElementById("panel-upload");
+
+    if (mode === "dataset") {
+      // Preloaded dataset observation mode: Gallery tab active; Upload tab completely hidden!
+      if (tabUpload) tabUpload.classList.add("hidden");
+      if (panelUpload) panelUpload.classList.add("hidden");
+      if (tabGallery) {
+        tabGallery.classList.remove("hidden");
+        tabGallery.click();
+      }
+      if (this.btnBackFromStage) {
+        this.btnBackFromStage.textContent = "← Back to Preloaded Gallery";
+      }
+    } else if (mode === "upload") {
+      // Custom image upload mode: Gallery tab hidden; Upload tab active and visible!
+      if (tabGallery) tabGallery.classList.add("hidden");
+      if (panelGallery) panelGallery.classList.add("hidden");
+      if (tabUpload) {
+        tabUpload.classList.remove("hidden");
+        tabUpload.click();
+      }
+      if (this.btnBackFromStage) {
+        this.btnBackFromStage.textContent = "← Change Image Type";
+      }
+    }
   }
 
   showCategoryView() {
@@ -285,6 +333,7 @@ class App {
   async handleCategoryExampleSelect({ category, image, imageBlob }) {
     this.shell.hideError();
     this.showProcessingView();
+    this.setSessionMode("dataset");
 
     if (this.stageActiveCategory) this.stageActiveCategory.textContent = category.title;
     if (this.stageActiveImage) this.stageActiveImage.textContent = image.title;
@@ -307,7 +356,10 @@ class App {
           this.shell.showError(`Failed to load scene: ${err.message}`);
         }
       },
-      () => this.showCategoryView()
+      () => {
+        this.showCategoryView();
+        this.categorySelection.showCategoryList();
+      }
     );
 
     try {
@@ -340,55 +392,72 @@ class App {
     }
   }
 
-  handleCategoryCustomUpload({ category }) {
+  handleCategoryCustomUpload({ category, customType }) {
     this.shell.hideError();
     this.showProcessingView();
+    this.setSessionMode("upload");
 
-    if (this.stageActiveCategory) this.stageActiveCategory.textContent = category.title;
-    if (this.stageActiveImage) this.stageActiveImage.textContent = "Custom Image";
+    const catTitle = customType ? customType.title : category.title;
+    if (this.stageActiveCategory) this.stageActiveCategory.textContent = catTitle;
+    if (this.stageActiveImage) this.stageActiveImage.textContent = "Custom Image Upload";
     if (this.stageActiveImageSep) this.stageActiveImageSep.classList.remove("hidden");
-    if (this.activeCategoryName) this.activeCategoryName.textContent = category.title;
+    if (this.activeCategoryName) this.activeCategoryName.textContent = catTitle;
     if (this.activeCategoryPill) this.activeCategoryPill.classList.remove("hidden");
 
-    const defaults = getCategoryFormDefaults(category);
+    const defaults = customType
+      ? {
+          label: customType.title,
+          units: customType.units,
+          vmin: customType.vmin,
+          vmax: customType.vmax,
+          kind: customType.kind,
+          center: customType.center,
+          category: customType.categoryKey,
+          scale: customType.scale,
+          orientation: customType.orientation,
+          low_at_start: true,
+          instrument_family: customType.instrumentFamily,
+        }
+      : getCategoryFormDefaults(category);
+
     this.upload.setCategory(category);
     this.upload.populateDefaults(defaults);
     this.updateHowToListenCategory(category);
 
-    this.gallery.setCategory(
-      category,
-      async (img) => {
-        try {
-          const blob = await fetchCategoryImageBlob(category.id, img.filename);
-          await this.handleCategoryExampleSelect({ category, image: img, imageBlob: blob });
-        } catch (err) {
-          this.shell.showError(`Failed to load scene: ${err.message}`);
-        }
-      },
-      () => this.showCategoryView()
-    );
+    // Update auto-supplied configuration card with legend status & logic
+    const configTitle = document.getElementById("upload-config-category-title");
+    const configLabel = document.getElementById("upload-config-label");
+    const configRange = document.getElementById("upload-config-range");
+    const configInstrument = document.getElementById("upload-config-instrument");
+    const configTechnique = document.getElementById("upload-config-technique");
+    const legendWrap = document.getElementById("upload-config-legend-wrap");
+    const noLegendNotice = document.getElementById("upload-config-no-legend-notice");
 
-    const uploadTab = document.getElementById("tab-upload");
-    if (uploadTab) uploadTab.click();
+    if (configTitle) configTitle.textContent = catTitle;
+    if (configLabel) configLabel.textContent = defaults.label;
+    if (configRange) configRange.textContent = `${defaults.vmin} to ${defaults.vmax} ${defaults.units}`;
+    if (configInstrument) {
+      configInstrument.textContent = customType
+        ? customType.synthVoice
+        : (defaults.instrument_family || "pad").toUpperCase() + " Synth";
+    }
+    if (configTechnique) {
+      configTechnique.textContent =
+        customType && !customType.hasLegend
+          ? "Direct Spatial Luminance & Event Mapping"
+          : "Colorbar Legend Inversion & Frequency Mapping";
+    }
+
+    if (customType && !customType.hasLegend) {
+      if (legendWrap) legendWrap.classList.add("hidden");
+      if (noLegendNotice) noLegendNotice.classList.remove("hidden");
+    } else {
+      if (noLegendNotice) noLegendNotice.classList.add("hidden");
+    }
   }
 
   handleDirectCustomUpload() {
-    this.shell.hideError();
-    this.showProcessingView();
-
-    if (this.categorySelection.categories && this.categorySelection.categories.length > 0) {
-      const defaultCat = this.categorySelection.categories[0];
-      const defaults = getCategoryFormDefaults(defaultCat);
-      this.upload.setCategory(defaultCat);
-      this.upload.populateDefaults(defaults);
-      this.updateHowToListenCategory(defaultCat);
-      if (this.stageActiveCategory) this.stageActiveCategory.textContent = defaultCat.title;
-      if (this.activeCategoryName) this.activeCategoryName.textContent = defaultCat.title;
-      if (this.activeCategoryPill) this.activeCategoryPill.classList.remove("hidden");
-    }
-
-    const uploadTab = document.getElementById("tab-upload");
-    if (uploadTab) uploadTab.click();
+    this.categorySelection.showCustomTypeSelection();
   }
 
   updateHowToListenCategory(category) {

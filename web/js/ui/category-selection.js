@@ -7,13 +7,13 @@
 import { getCategories, fetchCategoryImageBlob } from "../api/client.js";
 
 const CATEGORY_ICONS = {
-  temperature: "🌡️",
-  wind: "💨",
-  precipitation: "🌧️",
-  aerosol: "🌫️",
-  deep_space: "🌌",
-  lightning: "⚡",
-  default: "🛰️",
+  temperature: "",
+  wind: "",
+  precipitation: "",
+  aerosol: "",
+  deep_space: "",
+  lightning: "",
+  default: "",
 };
 
 function getCategoryIcon(catId) {
@@ -26,6 +26,169 @@ function getCategoryIcon(catId) {
   if (lower.includes("lightning")) return CATEGORY_ICONS.lightning;
   return CATEGORY_ICONS.default;
 }
+
+export const CUSTOM_IMAGE_TYPES = [
+  {
+    id: "GIOS Aerols",
+    title: "NASA GEOS Aerosols",
+    categoryKey: "aerosol",
+    badge: "Colorbar Legend Required",
+    badgeClass: "badge-legend-yes",
+    hasLegend: true,
+    legendDecision: "Colorbar Legend Required: Atmospheric aerosol optical depth maps utilize an empirical color gradient. The colorbar region will be extracted to recover quantitative aerosol measurements (0 to 5 AOD).",
+    sonificationLogic: "Aerosol Optical Depth (AOD) is inverted from the color gradient and mapped to high-altitude atmospheric wind frequencies with stereo spatial panning across geographic coordinates.",
+    variableRange: "0 to 5 AOD",
+    units: "AOD",
+    vmin: 0,
+    vmax: 5,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Atmosphere / Wind Synth",
+    instrumentFamily: "wind",
+    orientation: "horizontal",
+  },
+  {
+    id: "Hubble+IOTD",
+    title: "Hubble & Deep Space",
+    categoryKey: "ice",
+    badge: "Direct Spatial (No Legend)",
+    badgeClass: "badge-legend-no",
+    hasLegend: false,
+    legendDecision: "Direct Spatial & Flux Sonification (No Legend Required): Deep-space astrophotography measures radiant stellar flux and luminance directly from celestial coordinates rather than an empirical colorbar gradient.",
+    sonificationLogic: "Pixel brightness and astronomical flux translate directly into celestial harmonic pitch registers and overtone resonance across the two-dimensional spatial grid.",
+    variableRange: "0 to 100 relative flux",
+    units: "rel. flux",
+    vmin: 0,
+    vmax: 100,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Deep Space Resonant Synth",
+    instrumentFamily: "pad",
+    orientation: "horizontal",
+  },
+  {
+    id: "lightningEvents",
+    title: "ISS Lightning",
+    categoryKey: "precipitation",
+    badge: "Direct Events (No Legend)",
+    badgeClass: "badge-legend-no",
+    hasLegend: false,
+    legendDecision: "Direct Event Sonification (No Legend Required): ISS Lightning Imaging Sensor captures discrete orbital flash coordinates rather than a continuous colormap gradient.",
+    sonificationLogic: "Lightning flash events trigger acoustic pulse bursts and transient triggers mapped across the stereo soundfield corresponding to orbital sensor flash positions.",
+    variableRange: "0 to 1 flash density",
+    units: "flashes/area",
+    vmin: 0,
+    vmax: 1,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Transient Percussion / Pulse Synth",
+    instrumentFamily: "marimba",
+    orientation: "horizontal",
+  },
+  {
+    id: "Near-Surface-Temperature",
+    title: "NASA GEOS Near-Surface Temperature",
+    categoryKey: "temperature",
+    badge: "Colorbar Legend Required",
+    badgeClass: "badge-legend-yes",
+    hasLegend: true,
+    legendDecision: "Colorbar Legend Required: Near-surface thermal maps use a diverging cold-to-warm colormap centered around 0°C freezing point. Legend inversion extracts authentic temperatures (-40°C to +40°C).",
+    sonificationLogic: "Freezing point (0°C) is the tonal center; warm temperature anomalies elevate pitch into upper harmonic registers, while sub-zero anomalies produce deep resonant bass fundamentals.",
+    variableRange: "-40°C to +40°C",
+    units: "°C",
+    vmin: -40,
+    vmax: 40,
+    kind: "diverging",
+    scale: "linear",
+    center: 0,
+    synthVoice: "Warm Thermal Pad Synth",
+    instrumentFamily: "pad",
+    orientation: "horizontal",
+  },
+  {
+    id: "Near-Surface-Wind-Speed",
+    title: "NASA GEOS Near-Surface Wind Speed",
+    categoryKey: "ocean",
+    badge: "Colorbar Legend Required",
+    badgeClass: "badge-legend-yes",
+    hasLegend: true,
+    legendDecision: "Colorbar Legend Required: Global near-surface wind speed imagery uses a sequential velocity colormap (0 to 40 m/s). Colorbar inversion extracts calibrated wind speed values.",
+    sonificationLogic: "Wind velocity drives synthesizer pitch and noise modulation amplitude; high-velocity wind jets create rapid resonant sweeps and wide stereo flutter.",
+    variableRange: "0 to 40 m/s",
+    units: "m/s",
+    vmin: 0,
+    vmax: 40,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Wind Speed Acoustic Voice",
+    instrumentFamily: "wind",
+    orientation: "horizontal",
+  },
+  {
+    id: "Geos-fp-precipitation-and-clouds",
+    title: "NASA GEOS Precipitation & Clouds",
+    categoryKey: "precipitation",
+    badge: "Colorbar Legend Required",
+    badgeClass: "badge-legend-yes",
+    hasLegend: true,
+    legendDecision: "Colorbar Legend Required: Precipitation and atmospheric water vapor maps use a sequential colorbar to quantify rainfall rates (0 to 20 mm/hr).",
+    sonificationLogic: "Rainfall rate maps to acoustic droplet frequency and trigger density; heavy convective precipitation generates dense acoustic cluster textures.",
+    variableRange: "0 to 20 mm/hr",
+    units: "mm/hr",
+    vmin: 0,
+    vmax: 20,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Precipitation / Pluck Synth",
+    instrumentFamily: "pluck",
+    orientation: "horizontal",
+  },
+  {
+    id: "Vegetation-NDVI",
+    title: "Vegetation & Land Cover (NDVI)",
+    categoryKey: "vegetation",
+    badge: "Colorbar Legend Required",
+    badgeClass: "badge-legend-yes",
+    hasLegend: true,
+    legendDecision: "Colorbar Legend Required: Normalized Difference Vegetation Index (NDVI) requires colorbar extraction to measure photosynthetic activity (-0.1 to 0.9 NDVI).",
+    sonificationLogic: "Vegetation index scales pitch across harmonic pentatonic steps; barren ground produces sparse low notes, while dense canopy foliage triggers lush organic chords.",
+    variableRange: "-0.1 to 0.9 NDVI",
+    units: "NDVI",
+    vmin: -0.1,
+    vmax: 0.9,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Organic Acoustic Pluck",
+    instrumentFamily: "acoustic",
+    orientation: "horizontal",
+  },
+  {
+    id: "Generic-Scientific",
+    title: "Generic Scientific Map",
+    categoryKey: "generic",
+    badge: "Configurable Legend",
+    badgeClass: "badge-legend-no",
+    hasLegend: true,
+    legendDecision: "Colorbar Legend Configurable: For generic scientific data maps, the system detects color gradients or allows custom calibration overrides.",
+    sonificationLogic: "Linear mapping of scalar measurements to standard acoustic pitch range with stereo geographic distribution.",
+    variableRange: "0 to 100 units",
+    units: "units",
+    vmin: 0,
+    vmax: 100,
+    kind: "sequential",
+    scale: "linear",
+    center: null,
+    synthVoice: "Standard Synth Voice",
+    instrumentFamily: "pad",
+    orientation: "horizontal",
+  },
+];
 
 export function formatMarkdownToHtml(markdown) {
   if (!markdown) return "";
@@ -169,18 +332,18 @@ export function getMissionLabel(filename, catId) {
   const f = (filename || "").toLowerCase();
   const c = (catId || "").toLowerCase();
 
-  if (f.includes("webb") || f.includes("jwst")) return "🔭 NASA James Webb Space Telescope";
-  if (f.includes("chandra") && f.includes("ixpe")) return "🛰️ NASA Chandra & IXPE";
-  if (f.includes("chandra")) return "🛰️ NASA Chandra X-Ray Observatory";
-  if (f.includes("hubble")) return "🔭 NASA Hubble Space Telescope";
-  if (f.includes("roman")) return "🔭 NASA Nancy Grace Roman Space Telescope";
-  if (c.includes("space") || c.includes("hubble")) return "🌌 NASA Great Observatories";
-  if (c.includes("lightning") || f.includes("lightning")) return "🛰️ ISS Lightning Imaging Sensor (LIS)";
-  if (c.includes("aerosol")) return "🛰️ NASA GEOS-FP Aerosols (GMAO)";
-  if (c.includes("precip")) return "🛰️ NASA GEOS-FP Precipitation & Clouds";
-  if (c.includes("temp")) return "🛰️ NASA GEOS-FP Near-Surface Temperature";
-  if (c.includes("wind")) return "🛰️ NASA GEOS-FP Near-Surface Wind";
-  return "🛰️ NASA Earth Information Center";
+  if (f.includes("webb") || f.includes("jwst")) return "NASA James Webb Space Telescope";
+  if (f.includes("chandra") && f.includes("ixpe")) return "NASA Chandra & IXPE";
+  if (f.includes("chandra")) return "NASA Chandra X-Ray Observatory";
+  if (f.includes("hubble")) return "NASA Hubble Space Telescope";
+  if (f.includes("roman")) return "NASA Nancy Grace Roman Space Telescope";
+  if (c.includes("space") || c.includes("hubble")) return "NASA Great Observatories";
+  if (c.includes("lightning") || f.includes("lightning")) return "ISS Lightning Imaging Sensor (LIS)";
+  if (c.includes("aerosol")) return "NASA GEOS-FP Aerosols (GMAO)";
+  if (c.includes("precip")) return "NASA GEOS-FP Precipitation & Clouds";
+  if (c.includes("temp")) return "NASA GEOS-FP Near-Surface Temperature";
+  if (c.includes("wind")) return "NASA GEOS-FP Near-Surface Wind";
+  return "NASA Earth Information Center";
 }
 
 export class CategorySelectionUI {
@@ -270,12 +433,28 @@ export class CategorySelectionUI {
     this.btnUploadForCategory = document.getElementById("btn-upload-for-category");
     this.btnQuickUpload = document.getElementById("btn-quick-custom-upload");
 
+    // Custom Image Type Selection elements (Screen 1B)
+    this.customTypeSection = document.getElementById("view-custom-upload-type");
+    this.customTypeGrid = document.getElementById("custom-type-grid");
+    this.customTypeDecisionPanel = document.getElementById("custom-type-decision-panel");
+    this.btnBackFromTypeSelect = document.getElementById("btn-back-from-type-select");
+    this.btnProceedToCustomUpload = document.getElementById("btn-proceed-to-custom-upload");
+    this.selectedCustomType = null;
+
     this._initEvents();
   }
 
   _initEvents() {
     if (this.btnBackToCategories) {
       this.btnBackToCategories.addEventListener("click", () => this.showCategoryList());
+    }
+
+    if (this.btnBackFromTypeSelect) {
+      this.btnBackFromTypeSelect.addEventListener("click", () => this.showCategoryList());
+    }
+
+    if (this.btnProceedToCustomUpload) {
+      this.btnProceedToCustomUpload.addEventListener("click", () => this.proceedToCustomUpload());
     }
 
     if (this.tabModeGallery) {
@@ -339,6 +518,7 @@ export class CategorySelectionUI {
 
     if (this.btnQuickUpload) {
       this.btnQuickUpload.addEventListener("click", () => {
+        this.showCustomTypeSelection();
         if (this.onDirectCustomUpload) this.onDirectCustomUpload();
       });
     }
@@ -553,7 +733,7 @@ export class CategorySelectionUI {
 
       const icon = getCategoryIcon(cat.id);
       const legendBadgeClass = cat.has_legend ? "badge-legend-yes" : "badge-legend-no";
-      const legendBadgeText = cat.has_legend ? "✓ Colorbar Legend" : "⚡ Spatial / Direct";
+      const legendBadgeText = cat.has_legend ? "Colorbar Legend" : "Spatial / Direct";
 
       // Parameter summary
       let paramSummary = cat.title;
@@ -566,11 +746,11 @@ export class CategorySelectionUI {
         <div class="opening-thumb-wrap">
           <img src="${item.thumb_url}" alt="${displayTitle}" class="opening-thumb-img" loading="lazy">
           <div class="opening-card-overlay-badges">
-            <span class="badge badge-cat-chip">${icon} ${cat.title}</span>
+            <span class="badge badge-cat-chip">${cat.title}</span>
             <span class="badge ${legendBadgeClass}">${legendBadgeText}</span>
           </div>
           <button type="button" class="btn-quick-inspect" aria-label="Inspect high-res preview of ${displayTitle}">
-            🔍 Inspect
+            Inspect
           </button>
         </div>
         <div class="opening-card-content">
@@ -578,15 +758,15 @@ export class CategorySelectionUI {
           <h4 class="opening-card-title" title="${displayTitle}">${displayTitle}</h4>
           <div class="opening-card-meta">
             <span class="meta-tag meta-var" title="${paramSummary}">${paramSummary}</span>
-            <span class="meta-tag meta-sound">🎵 ${voiceSummary}</span>
+            <span class="meta-tag meta-sound">${voiceSummary}</span>
           </div>
         </div>
         <div class="opening-card-actions">
           <button type="button" class="btn btn-primary btn-sm btn-sonify-card" aria-label="Sonify ${displayTitle} now">
-            <span class="btn-icon-symbol">▶</span> Sonify Now
+            <span class="btn-icon-symbol"></span> Sonify Now
           </button>
           <button type="button" class="btn btn-secondary btn-sm btn-detail-card" aria-label="View preview and details for ${displayTitle}">
-            <span class="btn-icon-symbol">🔍</span> Science &amp; Details
+            <span class="btn-icon-symbol"></span> Science &amp; Details
           </button>
         </div>
       `;
@@ -758,7 +938,7 @@ export class CategorySelectionUI {
 
       const icon = getCategoryIcon(cat.id);
       const legendBadgeClass = cat.has_legend ? "badge-legend-yes" : "badge-legend-no";
-      const legendBadgeText = cat.has_legend ? "✓ Colorbar Legend" : "⚡ Direct / Spatial";
+      const legendBadgeText = cat.has_legend ? "Colorbar Legend" : "Direct / Spatial";
 
       const firstImage = cat.images && cat.images.length > 0 ? cat.images[0] : null;
       const coverHtml = firstImage
@@ -772,7 +952,7 @@ export class CategorySelectionUI {
         ${coverHtml}
         <div class="category-card-inner">
           <div class="category-card-header">
-            <span class="category-icon" aria-hidden="true">${icon}</span>
+            <span class="category-icon" aria-hidden="true"></span>
             <span class="badge ${legendBadgeClass}">${legendBadgeText}</span>
           </div>
           <h3 class="category-card-title">${cat.title}</h3>
@@ -786,7 +966,7 @@ export class CategorySelectionUI {
               : ""
           }
           <div class="category-card-footer">
-            <span class="category-card-count">🖼️ ${cat.image_count} preloaded example${cat.image_count === 1 ? "" : "s"}</span>
+            <span class="category-card-count">${cat.image_count} preloaded example${cat.image_count === 1 ? "" : "s"}</span>
             <span class="category-card-action">Select Category &amp; Explore →</span>
           </div>
         </div>
@@ -989,7 +1169,7 @@ export class CategorySelectionUI {
           <span class="example-filename">${img.filename}</span>
           ${
             isSingleImage
-              ? `<div class="featured-card-badge">✨ Featured Preloaded NASA Observation</div>`
+              ? `<div class="featured-card-badge">Featured Preloaded NASA Observation</div>`
               : ""
           }
         </div>
@@ -1076,11 +1256,155 @@ export class CategorySelectionUI {
     this.activeCategory = null;
     this.selectedImage = null;
 
+    if (this.customTypeSection) this.customTypeSection.classList.add("hidden");
     if (this.introCard) this.introCard.classList.remove("hidden");
     if (this.openingGalleryControls) this.openingGalleryControls.classList.remove("hidden");
+    if (this.openingGallerySection) this.openingGallerySection.classList.remove("hidden");
     if (this.detailPanel) this.detailPanel.classList.add("hidden");
 
     this.setViewMode(this.currentViewMode || "gallery");
+  }
+
+  showCustomTypeSelection() {
+    if (this.introCard) this.introCard.classList.add("hidden");
+    if (this.openingGalleryControls) this.openingGalleryControls.classList.add("hidden");
+    if (this.openingGallerySection) this.openingGallerySection.classList.add("hidden");
+    if (this.cardsGrid) this.cardsGrid.classList.add("hidden");
+    if (this.detailPanel) this.detailPanel.classList.add("hidden");
+    if (this.customTypeSection) this.customTypeSection.classList.remove("hidden");
+
+    this.renderCustomTypeGrid();
+    if (CUSTOM_IMAGE_TYPES.length > 0 && !this.selectedCustomType) {
+      this.selectCustomType(CUSTOM_IMAGE_TYPES[0]);
+    } else if (this.selectedCustomType) {
+      this.selectCustomType(this.selectedCustomType);
+    }
+  }
+
+  renderCustomTypeGrid() {
+    if (!this.customTypeGrid) return;
+    this.customTypeGrid.innerHTML = "";
+
+    CUSTOM_IMAGE_TYPES.forEach((type) => {
+      const card = document.createElement("article");
+      card.className = "custom-type-card";
+      card.tabIndex = 0;
+      card.setAttribute("role", "radio");
+      const isSelected = this.selectedCustomType && this.selectedCustomType.id === type.id;
+      card.setAttribute("aria-checked", String(isSelected));
+      if (isSelected) card.classList.add("selected");
+
+      card.innerHTML = `
+        <div class="custom-type-card-header">
+          <span class="badge ${type.badgeClass}">${type.badge}</span>
+        </div>
+        <h3 class="custom-type-card-title">${type.title}</h3>
+        <p class="custom-type-card-desc">${type.legendDecision.split(":")[1]?.trim() || type.legendDecision}</p>
+        <div class="custom-type-card-meta">
+          <div class="custom-type-meta-pill">
+            <span class="meta-label">Range:</span>
+            <strong>${type.variableRange}</strong>
+          </div>
+          <div class="custom-type-meta-pill">
+            <span class="meta-label">Voice:</span>
+            <strong>${type.synthVoice}</strong>
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline btn-select-type" aria-label="Select ${type.title}">
+          Select Category
+        </button>
+      `;
+
+      const selectAction = () => {
+        this.selectCustomType(type);
+      };
+
+      card.addEventListener("click", selectAction);
+      card.addEventListener("dblclick", () => {
+        this.selectCustomType(type);
+        this.proceedToCustomUpload();
+      });
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          selectAction();
+        }
+      });
+
+      this.customTypeGrid.appendChild(card);
+    });
+  }
+
+  selectCustomType(type) {
+    this.selectedCustomType = type;
+    if (this.customTypeGrid) {
+      this.customTypeGrid.querySelectorAll(".custom-type-card").forEach((c, idx) => {
+        const isMatch = CUSTOM_IMAGE_TYPES[idx] && CUSTOM_IMAGE_TYPES[idx].id === type.id;
+        c.classList.toggle("selected", isMatch);
+        c.setAttribute("aria-checked", String(isMatch));
+      });
+    }
+
+    if (this.customTypeDecisionPanel) {
+      this.customTypeDecisionPanel.classList.remove("hidden");
+    }
+
+    const titleEl = document.getElementById("decision-type-title");
+    const badgeEl = document.getElementById("decision-legend-badge");
+    const legendDescEl = document.getElementById("decision-legend-desc");
+    const logicDescEl = document.getElementById("decision-logic-desc");
+    const varRangeEl = document.getElementById("decision-var-range");
+    const synthVoiceEl = document.getElementById("decision-synth-voice");
+    const legendStatusEl = document.getElementById("decision-legend-status");
+    const proceedBtn = document.getElementById("btn-proceed-to-custom-upload");
+
+    if (titleEl) titleEl.textContent = type.title;
+    if (badgeEl) {
+      badgeEl.textContent = type.badge;
+      badgeEl.className = `decision-badge badge ${type.badgeClass}`;
+    }
+    if (legendDescEl) legendDescEl.textContent = type.legendDecision;
+    if (logicDescEl) logicDescEl.textContent = type.sonificationLogic;
+    if (varRangeEl) varRangeEl.textContent = type.variableRange;
+    if (synthVoiceEl) synthVoiceEl.textContent = type.synthVoice;
+    if (legendStatusEl) {
+      legendStatusEl.textContent = type.hasLegend ? "Colorbar Legend Required" : "No Legend (Direct Spatial / Events)";
+    }
+    if (proceedBtn) {
+      proceedBtn.textContent = `Proceed to Upload ${type.title} →`;
+    }
+  }
+
+  proceedToCustomUpload() {
+    if (!this.selectedCustomType) return;
+    const type = this.selectedCustomType;
+    let matchedCat = this.categories.find(
+      (c) => c.id === type.id || c.title?.toLowerCase() === type.title.toLowerCase()
+    );
+    if (!matchedCat) {
+      matchedCat = {
+        id: type.id,
+        title: type.title,
+        has_legend: type.hasLegend,
+        description: type.legendDecision,
+        predefined_config: {
+          label: type.title,
+          units: type.units,
+          vmin: type.vmin,
+          vmax: type.vmax,
+          kind: type.kind,
+          center: type.center,
+          category: type.categoryKey,
+          scale: type.scale,
+          orientation: type.orientation,
+          instrument_family: type.instrumentFamily,
+        },
+        sonification_technique: type.sonificationLogic,
+      };
+    }
+    if (this.onSelectCustomUpload) {
+      this.onSelectCustomUpload({ category: matchedCat, customType: type });
+    }
   }
 
   show() {
