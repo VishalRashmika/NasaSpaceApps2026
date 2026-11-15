@@ -225,8 +225,12 @@
           <!-- Information & Legend Column -->
           <div class="cat-info-col">
             <div class="cat-section-card">
-              <h4 class="cat-section-heading">Scientific Context &amp; Mission Overview</h4>
-              <p id="cat-detail-desc" class="cat-detail-desc"></p>
+              <div class="cat-section-header-row">
+                <h4 class="cat-section-heading">Scientific Context &amp; Mission Overview</h4>
+                <span id="cat-science-badge" class="badge badge-meta-sub">NASA Modeling &amp; Analysis</span>
+              </div>
+              <div id="cat-science-chips" class="meta-chips-row"></div>
+              <div id="cat-detail-desc" class="cat-detail-desc"></div>
               <div id="cat-markdown-expander" class="cat-markdown-expander">
                 <button type="button" id="btn-toggle-info-md" class="btn btn-sm btn-outline" aria-expanded="false">
                   View Full Scientific Notes ▾
@@ -237,13 +241,16 @@
 
             <!-- Color Legend Section (only displayed for categories that have one) -->
             <div id="cat-legend-container" class="cat-legend-card">
-              <h4 class="cat-section-heading">Color Legend Definition</h4>
+              <div class="cat-section-header-row">
+                <h4 class="cat-section-heading">Color Legend Definition</h4>
+                <span id="cat-legend-badge-type" class="badge badge-meta-sub">Colorimetric Scale</span>
+              </div>
               <div id="cat-legend-image-wrap" class="cat-legend-image-wrap hidden">
                 <div class="legend-image-frame">
                   <img id="cat-legend-img" class="cat-legend-img" alt="Colorbar legend for the selected dataset category" src="">
                 </div>
-                <p id="cat-legend-notes" class="cat-legend-notes"></p>
               </div>
+              <div id="cat-legend-notes" class="cat-legend-notes"></div>
               <div id="cat-no-legend-notice" class="cat-no-legend-notice hidden">
                 <p class="no-legend-text">
                   <strong>Direct Spatial &amp; Event Sonification:</strong> This dataset translates discrete physical events or astronomical flux coordinates directly into pitch and resonance without an empirical gradient colorbar.
@@ -673,21 +680,39 @@
             <div class="modal-image-frame">
               <img id="modal-obs-img" class="modal-full-img" alt="" src="">
             </div>
+            <div id="modal-image-meta" class="modal-image-meta"></div>
           </div>
           <div class="modal-meta-col">
-            <div class="modal-meta-section">
-              <h4 class="modal-meta-heading">Scientific Context &amp; Mission</h4>
-              <p id="modal-obs-desc" class="modal-obs-desc"></p>
-            </div>
-            <div id="modal-legend-section" class="modal-meta-section">
-              <h4 class="modal-meta-heading">Color Legend Definition</h4>
-              <div id="modal-legend-img-wrap" class="modal-legend-wrap">
-                <img id="modal-legend-img" class="modal-legend-img" alt="Colorbar legend" src="">
+            <!-- 1. Scientific Context & Mission Card -->
+            <div class="modal-meta-section modal-card-science">
+              <div class="modal-section-header-row">
+                <h4 class="modal-meta-heading">Scientific Context &amp; Mission</h4>
+                <span id="modal-science-badge" class="badge badge-meta-sub">NASA Modeling &amp; Analysis</span>
               </div>
-              <p id="modal-legend-notes" class="modal-legend-notes"></p>
+              <div id="modal-science-chips" class="meta-chips-row"></div>
+              <div id="modal-obs-desc" class="modal-obs-desc"></div>
             </div>
-            <div class="modal-meta-section">
-              <h4 class="modal-meta-heading">Acoustic Translation</h4>
+
+            <!-- 2. Color Legend Definition Card -->
+            <div id="modal-legend-section" class="modal-meta-section modal-card-legend">
+              <div class="modal-section-header-row">
+                <h4 class="modal-meta-heading">Color Legend Definition</h4>
+                <span id="modal-legend-badge" class="badge badge-meta-sub">Scientific Calibration</span>
+              </div>
+              <div id="modal-legend-img-wrap" class="modal-legend-wrap">
+                <div class="modal-legend-frame">
+                  <img id="modal-legend-img" class="modal-legend-img" alt="Colorbar legend" src="">
+                </div>
+              </div>
+              <div id="modal-legend-notes" class="modal-legend-notes"></div>
+            </div>
+
+            <!-- 3. Acoustic Translation Card -->
+            <div class="modal-meta-section modal-card-acoustic">
+              <div class="modal-section-header-row">
+                <h4 class="modal-meta-heading">Acoustic Translation</h4>
+                <span id="modal-acoustic-badge" class="badge badge-meta-sub">Harmonic Synthesis</span>
+              </div>
               <div class="modal-tags-grid">
                 <div class="modal-tag-item">
                   <span class="modal-tag-label">Acoustic Voice</span>
@@ -702,10 +727,13 @@
                   <strong id="modal-obs-technique" class="modal-tag-value">—</strong>
                 </div>
               </div>
+              <p id="modal-obs-acoustic-concept" class="modal-obs-concept"></p>
+              <div id="modal-sound-mappings-container" class="modal-sound-mappings-container"></div>
             </div>
+
             <div class="modal-actions-footer">
               <button type="button" id="btn-modal-sonify-now" class="btn btn-primary btn-lg btn-block">
-                Sonify This Observation Now
+                Sonify This Observation Now →
               </button>
             </div>
           </div>

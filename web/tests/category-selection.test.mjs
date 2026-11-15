@@ -8,6 +8,12 @@ import {
   formatObservationDisplayTitle,
   getMissionLabel,
   formatCategoryFilterLabel,
+  getCategoryScientificMeta,
+  formatImageResolutionMeta,
+  formatInlineMarkdown,
+  formatScientificDescriptionHtml,
+  formatColorLegendCardHtml,
+  formatSoundMappingsHtml,
 } from "../js/ui/category-selection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -327,4 +333,119 @@ test("Sidebar tabs in ShellUI are isolated to .sidebar-pane to prevent hiding th
     /querySelectorAll\(["']\.sidebar-pane\s+\.tab-panel["']\)/,
     "ShellUI tab panels must be scoped to .sidebar-pane"
   );
+});
+
+test("Improved Information Menus Cards: Structured scientific metadata and mission labels", () => {
+  // Mission badge for GIOS Aerols
+  assert.equal(
+    getMissionLabel("Aerosols_2025.png", "GIOS Aerols"),
+    "NASA GEOS-FP Aerosols (GMAO)"
+  );
+
+  // Metadata retrieval for all authentic categories
+  const aerosolMeta = getCategoryScientificMeta({ id: "GIOS Aerols", title: "NASA GEOS Aerosols" });
+  assert.equal(aerosolMeta.model, "GEOS-FP 2Km Replay (NASA GMAO)");
+  assert.equal(aerosolMeta.domain, "Atmospheric Aerosol Dynamics");
+  assert.equal(aerosolMeta.colors.length, 4);
+  assert.equal(aerosolMeta.colors[0].name, "Blue");
+  assert.match(aerosolMeta.colors[0].phenomenon, /Sea Salt/);
+  assert.equal(aerosolMeta.colors[1].name, "Pink / Magenta");
+  assert.match(aerosolMeta.colors[1].phenomenon, /Desert Dust/);
+  assert.equal(aerosolMeta.colors[2].name, "Orange / Red");
+  assert.match(aerosolMeta.colors[2].phenomenon, /Smoke/);
+  assert.equal(aerosolMeta.colors[3].name, "Green");
+  assert.match(aerosolMeta.colors[3].phenomenon, /Sulfates/);
+
+  // Resolution meta
+  assert.equal(formatImageResolutionMeta("Aerosols_1500x1179_72dpi.png"), "1500 × 1179 px (72 DPI)");
+  assert.equal(formatImageResolutionMeta("Aerosols_1920x1080.png"), "1920 × 1080 px (Full HD)");
+  assert.equal(formatImageResolutionMeta("temp_2048x1024.jpg"), "2048 × 1024 px (Scientific Projection)");
+});
+
+test("Improved Information Menus Cards: Scientific description formatting with zero raw markdown syntax", () => {
+  const rawDesc = "The data tracks the global transport of **aerosols**—tiny solid or liquid particles.\n\nSnapshot of Earth's atmosphere on **August 19, 2025**.";
+  const formattedHtml = formatScientificDescriptionHtml(rawDesc);
+  assert.match(formattedHtml, /<p class=["']modal-obs-paragraph["']>/, "Must wrap in paragraph");
+  assert.match(formattedHtml, /<strong>aerosols<\/strong>/, "Must convert **aerosols** to strong element");
+  assert.match(formattedHtml, /<strong>August 19, 2025<\/strong>/, "Must convert bold date to strong element");
+  assert.doesNotMatch(formattedHtml, /\*\*/, "Must not contain raw asterisks");
+});
+
+test("Improved Information Menus Cards: Color Legend Cards format structured cards and swatches", () => {
+  const aerosolCat = {
+    id: "GIOS Aerols",
+    title: "NASA GEOS Aerosols",
+    has_legend: true,
+  };
+  const aerosolHtml = formatColorLegendCardHtml(aerosolCat, "raw markdown note");
+
+  assert.match(aerosolHtml, /class=["']legend-swatch-grid["']/, "Must contain legend swatch grid");
+  assert.match(aerosolHtml, /class=["']legend-swatch-card["']/, "Must contain swatch cards");
+  assert.match(aerosolHtml, /BLUE \(Sea Salt\)|Blue/i, "Must identify Blue Sea Salt");
+  assert.match(aerosolHtml, /Pink \/ Magenta/i, "Must identify Pink/Magenta Dust");
+  assert.match(aerosolHtml, /Orange \/ Red/i, "Must identify Orange/Red Smoke");
+  assert.match(aerosolHtml, /Green/i, "Must identify Green Sulfates");
+  assert.match(aerosolHtml, /Hurricane Erin/i, "Must include visual patterns");
+  assert.match(aerosolHtml, /Saharan desert dust/i, "Must include Saharan desert dust detail");
+  assert.doesNotMatch(aerosolHtml, /\*\s*\*\*BLUE/, "Must not dump unformatted asterisks");
+
+  // Temperature milestones
+  const tempCat = {
+    id: "Near-Surface-Temperature",
+    title: "NASA GEOS Near-Surface Temperature",
+    has_legend: true,
+  };
+  const tempHtml = formatColorLegendCardHtml(tempCat, "milestone notes");
+  assert.match(tempHtml, /class=["']legend-milestone-grid["']/, "Temperature must render milestone grid");
+  assert.match(tempHtml, /-40°C to -20°C/, "Must show polar freezing range");
+  assert.match(tempHtml, /0°C to \+20°C/, "Must show temperate range");
+});
+
+test("Improved Information Menus Cards: Acoustic Translation data-to-sound mapping specification", () => {
+  const sampleCat = {
+    title: "NASA GEOS Aerosols",
+    sound_mappings: [
+      {
+        data_characteristic: "Aerosol Optical Thickness (0 to 5 AOD)",
+        sound_parameter: "Band-Passed Noise Center Frequency",
+        technique: "Quantized scale pitch across 2 octaves",
+        detail: "Higher optical thickness drives higher resonant frequencies.",
+      },
+      {
+        data_characteristic: "Plume Fronts & Dense Smoke/Dust Edges",
+        sound_parameter: "Acoustic Roughness & Bandwidth Detuning",
+        technique: "Local gradient modulates NoteEvent.roughness",
+        detail: "Gritty acoustic friction.",
+      },
+    ],
+  };
+
+  const soundHtml = formatSoundMappingsHtml(sampleCat);
+  assert.match(soundHtml, /class=["']modal-mapping-table["']/, "Must render mapping table");
+  assert.match(soundHtml, /Aerosol Optical Thickness/, "Must include feature name");
+  assert.match(soundHtml, /Band-Passed Noise Center Frequency/, "Must include sound parameter");
+  assert.match(soundHtml, /Quantized scale pitch/, "Must include technique");
+  assert.match(soundHtml, /Gritty acoustic friction/, "Must include detail");
+});
+
+test("Improved Information Menus Cards: HTML shell elements and CSS rules audit", () => {
+  // Modal layout elements in HTML
+  assert.match(html, /id=["']modal-science-chips["']/, "Modal must have science metadata chips");
+  assert.match(html, /id=["']modal-image-meta["']/, "Modal must have image metadata bar");
+  assert.match(html, /id=["']modal-obs-acoustic-concept["']/, "Modal must have acoustic concept element");
+  assert.match(html, /id=["']modal-sound-mappings-container["']/, "Modal must have sound mappings container");
+
+  // Detail panel elements in HTML
+  assert.match(html, /id=["']cat-science-chips["']/, "Detail panel must have science metadata chips");
+
+  // CSS rules for improved cards
+  assert.match(css, /\.modal-gallery-preview\s*\{[^}]*max-width:\s*1040px/i, "Preview modal expanded to 1040px");
+  assert.match(css, /\.meta-chips-row\b/, "CSS must define .meta-chips-row");
+  assert.match(css, /\.meta-chip\b/, "CSS must define .meta-chip");
+  assert.match(css, /\.legend-swatch-grid\b/, "CSS must define .legend-swatch-grid");
+  assert.match(css, /\.legend-swatch-card\b/, "CSS must define .legend-swatch-card");
+  assert.match(css, /\.swatch-color-pill\b/, "CSS must define .swatch-color-pill");
+  assert.match(css, /\.legend-milestone-grid\b/, "CSS must define .legend-milestone-grid");
+  assert.match(css, /\.modal-mapping-table\b/, "CSS must define .modal-mapping-table");
+  assert.match(css, /\.modal-tags-grid\b/, "CSS must define .modal-tags-grid");
 });

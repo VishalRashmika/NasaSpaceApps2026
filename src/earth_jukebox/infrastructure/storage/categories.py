@@ -54,7 +54,7 @@ def _parse_info_sections(text: str) -> tuple[str, str, str | None, str | None, s
     sections[current_sec] = []
 
     for line in lines:
-        m = re.match(r"^(#{1,3})\s+(.*)$", line)
+        m = re.match(r"^(#{1,2})\s+(.*)$", line)
         if m:
             heading = m.group(2).strip()
             if not title and m.group(1) == "#":
@@ -72,10 +72,10 @@ def _parse_info_sections(text: str) -> tuple[str, str, str | None, str | None, s
     description = ""
     for sec_name, content in sec_texts.items():
         if re.search(r"overview|context|definition|data type", sec_name, re.IGNORECASE):
-            # Take first non-empty paragraph
+            # Take substantive paragraphs
             paras = [p.strip() for p in content.split("\n\n") if p.strip()]
             if paras:
-                description = paras[0]
+                description = "\n\n".join(paras[:2])
                 break
 
     if not description:

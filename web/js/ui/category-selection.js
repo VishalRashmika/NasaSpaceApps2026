@@ -377,11 +377,412 @@ export function getMissionLabel(filename, catId) {
   if (f.includes("roman")) return "NASA Nancy Grace Roman Space Telescope";
   if (c.includes("space") || c.includes("hubble")) return "NASA Great Observatories";
   if (c.includes("lightning") || f.includes("lightning")) return "ISS Lightning Imaging Sensor (LIS)";
-  if (c.includes("aerosol")) return "NASA GEOS-FP Aerosols (GMAO)";
-  if (c.includes("precip")) return "NASA GEOS-FP Precipitation & Clouds";
+  if (c.includes("aerosol") || c.includes("aerols") || c.includes("gios")) return "NASA GEOS-FP Aerosols (GMAO)";
+  if (c.includes("precip") || c.includes("cloud")) return "NASA GEOS-FP Precipitation & Clouds";
   if (c.includes("temp")) return "NASA GEOS-FP Near-Surface Temperature";
   if (c.includes("wind")) return "NASA GEOS-FP Near-Surface Wind";
   return "NASA Earth Information Center";
+}
+
+/**
+ * Returns structured scientific metadata and color mappings for authentic NASA datasets.
+ */
+export function getCategoryScientificMeta(category) {
+  const catId = (category?.id || "").toLowerCase();
+  const title = (category?.title || "").toLowerCase();
+
+  if (catId.includes("aerosol") || catId.includes("aerols") || title.includes("aerosol")) {
+    return {
+      model: "GEOS-FP 2Km Replay (NASA GMAO)",
+      domain: "Atmospheric Aerosol Dynamics",
+      snapshot: "Aug 19, 2025 (20:00 UTC)",
+      variables: "Aerosol Optical Thickness (AOD) by Type",
+      format: "High-Resolution Spatial Map (72 / 1080p)",
+      colors: [
+        {
+          name: "Blue",
+          phenomenon: "Sea Salt & Cyclones",
+          color: "#2563eb",
+          desc: "Sea salt kicked up by strong winds blowing across the ocean.",
+          patterns: "Swirling, circular patterns over oceans representing storms, tropical cyclones, or hurricanes (e.g., Hurricane Erin in the Atlantic). Pale blue to white reflects stormy conditions with thick concentrations.",
+        },
+        {
+          name: "Pink / Magenta",
+          phenomenon: "Desert Dust",
+          color: "#db2777",
+          desc: "Mineral desert dust transported by atmospheric winds.",
+          patterns: "Massive hazy plumes traveling across continents and oceans. Key example: Saharan desert dust traveling westward across the Atlantic toward the Caribbean and Americas.",
+        },
+        {
+          name: "Orange / Red",
+          phenomenon: "Biomass Burning & Wildfire Smoke",
+          color: "#ea580c",
+          desc: "Organic and black carbon, primarily from burning biomass.",
+          patterns: "Dense drifting plumes originating from landmasses. Major sources include wildfires (e.g., in Spain/Southern Europe) and seasonal agricultural burning (e.g., Southern Africa).",
+        },
+        {
+          name: "Green",
+          phenomenon: "Sulfates & Volcanic Emissions",
+          color: "#16a34a",
+          desc: "Sulfate particles from anthropogenic pollution and natural volcanism.",
+          patterns: "Narrow concentrated streams (volcanic plumes from Kilauea or Mount Etna) or broad regional industrial smog over densely populated areas.",
+        },
+      ],
+    };
+  }
+
+  if (catId.includes("temp") || title.includes("temperature")) {
+    return {
+      model: "GEOS Forward Processing (NASA GMAO)",
+      domain: "Thermodynamic Heat Transport",
+      snapshot: "Global Surface Replay",
+      variables: "Near-Surface Air Temperature at 2m (T2M)",
+      format: "Global Latitude-Longitude Grid (2048x1024)",
+      milestones: [
+        {
+          range: "-40°C to -20°C",
+          label: "Very Cold (Polar Glacial)",
+          color: "#1e3a8a",
+          desc: "Dark navy blue to icy white, transitioning to deep magenta over polar ice sheets.",
+        },
+        {
+          range: "-20°C to 0°C",
+          label: "Cold to Freezing Point",
+          color: "#0284c7",
+          desc: "Deep magenta/purple into dark blue, lightening to pale cyan at the 0°C freezing point.",
+        },
+        {
+          range: "0°C to +20°C",
+          label: "Temperate to Warm",
+          color: "#16a34a",
+          desc: "Pale cyan transitioning into pale green, shifting into bright yellow and orange across mid-latitudes.",
+        },
+        {
+          range: "+20°C to +40°C",
+          label: "Hot to Extreme Heatwave",
+          color: "#dc2626",
+          desc: "Deep orange into intense fiery red, darkening into deep brown/black at maximum thermal extremes.",
+        },
+      ],
+    };
+  }
+
+  if (catId.includes("wind") || title.includes("wind speed")) {
+    return {
+      model: "GEOS-FP 10-Meter Wind Analysis (NASA GMAO)",
+      domain: "Kinetic Atmospheric Circulation",
+      snapshot: "Synoptic Surface Wind Field",
+      variables: "Near-Surface Wind Velocity at 10m (0 to 40 m/s)",
+      format: "Global Lat-Lon Grid (2048x1024)",
+      milestones: [
+        {
+          range: "0 to 4 m/s",
+          label: "Calm",
+          color: "#6b7280",
+          desc: "Solid gray basemap indicating calm wind fields across land and equatorial doldrums.",
+        },
+        {
+          range: "4 to 10 m/s",
+          label: "Light to Gentle Breeze",
+          color: "#3b82f6",
+          desc: "Light purple/lavender transitioning through deep indigo into solid ocean blue.",
+        },
+        {
+          range: "10 to 15 m/s",
+          label: "Moderate Wind Streams",
+          color: "#10b981",
+          desc: "Light cyan transitioning into bright green and yellow-green along prevailing trade belts.",
+        },
+        {
+          range: "15 to 20 m/s",
+          label: "Strong Wind Bands",
+          color: "#f59e0b",
+          desc: "Yellow shifting into orange and pure red (20 m/s strong wind threshold).",
+        },
+        {
+          range: "20 to 30 m/s",
+          label: "Gale & Storm Forces",
+          color: "#dc2626",
+          desc: "Bright red deepening into crimson and dark brown/black around severe maritime fronts.",
+        },
+        {
+          range: "30 to 40 m/s",
+          label: "Hurricane & Cyclone Vortices",
+          color: "#450a0a",
+          desc: "Black fading into dark desaturated gradient at extreme hurricane-force circulation cores.",
+        },
+      ],
+    };
+  }
+
+  if (catId.includes("precip") || catId.includes("cloud") || title.includes("precipitation")) {
+    return {
+      model: "GEOS-FP Multi-Stage Modeling (NASA SVS 5149)",
+      domain: "Hydrological Atmospheric Systems",
+      snapshot: "Global Cloud & Rain Dynamics",
+      variables: "Precipitation Rate (0-20 mm/hr) & Cloud Optical Depth",
+      format: "Dual-Layer Composite Grid (2048x1024)",
+      milestones: [
+        {
+          range: "Grayscale Basemap",
+          label: "Layer A: Cloud Optical Thickness",
+          color: "#94a3b8",
+          desc: "Grayscale cloud layer: white represents thick, dense cloud fields; dark indicates clear skies.",
+        },
+        {
+          range: "0.0 to 1.5 mm/hr",
+          label: "Light Drizzle / Mist",
+          color: "#15803d",
+          desc: "Dark green to light green rainfall overlay.",
+        },
+        {
+          range: "1.5 to 7.0 mm/hr",
+          label: "Moderate Precipitation",
+          color: "#0284c7",
+          desc: "Dark blue transitioning into cyan and light purple.",
+        },
+        {
+          range: "7.0 to 15.0 mm/hr",
+          label: "Heavy Convective Rainfall",
+          color: "#b91c1c",
+          desc: "Dark magenta transitioning to dark red and orange.",
+        },
+        {
+          range: "15.0 to 20.0 mm/hr",
+          label: "Severe Atmospheric River / Downpour",
+          color: "#eab308",
+          desc: "Orange transitioning to intense bright yellow, signaling flash flood hazards.",
+        },
+      ],
+    };
+  }
+
+  if (catId.includes("space") || catId.includes("hubble") || title.includes("deep space")) {
+    return {
+      model: "NASA Great Observatories (Hubble, Webb, Chandra)",
+      domain: "Astrophysical Celestial Dynamics",
+      snapshot: "Deep Astronomical Exposures",
+      variables: "Multi-Wavelength Luminance & Stellar Flux",
+      format: "High-Resolution Astrophotography",
+      milestones: [
+        {
+          range: "Orange/Red Clusters",
+          label: "Cooler / Older Stars (Red Giants)",
+          color: "#ea580c",
+          desc: "Point source stellar clusters triggering resonant acoustic marimba strikes.",
+        },
+        {
+          range: "Blue Clusters",
+          label: "Hot Younger Stars & Starbursts",
+          color: "#3b82f6",
+          desc: "High-energy point sources triggering bright glockenspiel bell chimes.",
+        },
+        {
+          range: "Diffuse Nebulosity",
+          label: "Interstellar Gas & Background Dust",
+          color: "#8b5cf6",
+          desc: "Continuous celestial choir / ambient synth pad with amplitude scaling by luminance.",
+        },
+        {
+          range: "Radius & Angle (r, θ)",
+          label: "Orbital Sequencing Geometry",
+          color: "#06b6d4",
+          desc: "Radius from center maps to pitch register; polar angle maps to playhead sweep timing.",
+        },
+      ],
+    };
+  }
+
+  if (catId.includes("lightning") || title.includes("lightning")) {
+    return {
+      model: "ISS Lightning Imaging Sensor (LIS / SVS 5011)",
+      domain: "Planetary Electrodynamics",
+      snapshot: "10-Day Roving Window (2017-2023)",
+      variables: "Discrete Lightning Flash Coordinates",
+      format: "Global Orbital Event Distribution (2048x1024)",
+      milestones: [
+        {
+          range: "Yellow / Gold Pixels",
+          label: "Event Indicator (Lightning Flash)",
+          color: "#eab308",
+          desc: "High Red/Green emission coordinates indicate one or more orbital lightning flashes, triggering stereo transient acoustic pulses.",
+        },
+        {
+          range: "Dark Basemap",
+          label: "Null Indicator (Non-Active Background)",
+          color: "#374151",
+          desc: "Oceans and continents with zero recorded lightning activity during the 10-day roving observation window.",
+        },
+      ],
+    };
+  }
+
+  return {
+    model: "NASA Earth Information System",
+    domain: "Earth Observation Data",
+    snapshot: "Standard Satellite Visualization",
+    variables: category?.predefined_config
+      ? `${category.predefined_config.label} (${category.predefined_config.vmin} to ${category.predefined_config.vmax} ${category.predefined_config.units})`
+      : category?.title || "Scientific Data",
+    format: "Calibrated Scientific Visualization",
+  };
+}
+
+export function formatImageResolutionMeta(filename) {
+  const f = (filename || "").toLowerCase();
+  if (f.includes("1500x1179")) return "1500 × 1179 px (72 DPI)";
+  if (f.includes("1920x1080")) return "1920 × 1080 px (Full HD)";
+  if (f.includes("2048x1024")) return "2048 × 1024 px (Scientific Projection)";
+  if (f.includes("2048p60")) return "2048p (Science On a Sphere 60 FPS)";
+  return "NASA Authentic Resolution";
+}
+
+export function formatInlineMarkdown(text) {
+  if (!text) return "";
+  const escapeHtml = (str) =>
+    str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+  let t = escapeHtml(text);
+  t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  t = t.replace(/`(.+?)`/g, "<code>$1</code>");
+  t = t.replace(/\$([^\$]+)\$/g, "<span class='math-tex'>$1</span>");
+  return t;
+}
+
+export function formatScientificDescriptionHtml(descText) {
+  if (!descText) return "<p class=\"modal-obs-paragraph\">Authentic scientific observation from NASA.</p>";
+  const paras = descText
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !p.startsWith("#"));
+
+  if (paras.length === 0) {
+    return `<p class="modal-obs-paragraph">${formatInlineMarkdown(descText.trim())}</p>`;
+  }
+
+  return paras
+    .map((p) => `<p class="modal-obs-paragraph">${formatInlineMarkdown(p)}</p>`)
+    .join("");
+}
+
+export function formatColorLegendCardHtml(category, rawNotes) {
+  const meta = getCategoryScientificMeta(category);
+
+  // If category has categorical particulate color cards (e.g. GIOS Aerols)
+  if (meta && Array.isArray(meta.colors) && meta.colors.length > 0) {
+    const cardsHtml = meta.colors
+      .map(
+        (c) => `
+      <div class="legend-swatch-card" style="border-left-color: ${c.color};">
+        <div class="swatch-header">
+          <span class="swatch-color-pill" style="background-color: ${c.color};" aria-hidden="true"></span>
+          <strong class="swatch-title">${c.name}</strong>
+          <span class="swatch-badge">${c.phenomenon}</span>
+        </div>
+        <div class="swatch-body">
+          <div class="swatch-desc-row">
+            <span class="swatch-field-label">Description:</span>
+            <span class="swatch-field-text">${c.desc}</span>
+          </div>
+          <div class="swatch-desc-row">
+            <span class="swatch-field-label">Visual Patterns:</span>
+            <span class="swatch-field-text">${c.patterns}</span>
+          </div>
+        </div>
+      </div>
+    `
+      )
+      .join("");
+
+    return `
+      <p class="legend-intro-text">
+        To successfully analyze images from this dataset, use the following exact color mappings to classify the atmospheric phenomena present in the frames:
+      </p>
+      <div class="legend-swatch-grid" role="region" aria-label="Aerosol Particulate Color Legend">
+        ${cardsHtml}
+      </div>
+    `;
+  }
+
+  // If category has continuous or discrete milestones
+  if (meta && Array.isArray(meta.milestones) && meta.milestones.length > 0) {
+    const milestonesHtml = meta.milestones
+      .map(
+        (m) => `
+      <div class="legend-milestone-card" style="border-left-color: ${m.color};">
+        <div class="milestone-header">
+          <span class="milestone-badge" style="color: ${m.color};">
+            <span class="swatch-color-pill" style="background-color: ${m.color};" aria-hidden="true"></span>
+            ${m.range}
+          </span>
+          <strong class="milestone-label">${m.label}</strong>
+        </div>
+        <p class="milestone-desc">${m.desc}</p>
+      </div>
+    `
+      )
+      .join("");
+
+    const intro = category.has_legend
+      ? "Calibrated scalar colorbar maps quantitative measurements to pixel values:"
+      : "Rule-based sonification logic translates spatial features into acoustic parameters:";
+
+    return `
+      <p class="legend-intro-text">${intro}</p>
+      <div class="legend-milestone-grid" role="region" aria-label="Color and Value Mapping Rules">
+        ${milestonesHtml}
+      </div>
+    `;
+  }
+
+  // Fallback: parse rawNotes with markdown parser if present
+  if (rawNotes) {
+    return `<div class="legend-markdown-content">${formatMarkdownToHtml(rawNotes)}</div>`;
+  }
+
+  return `<p class="legend-intro-text">Calibrated data colorbar for value recovery and sonification.</p>`;
+}
+
+export function formatSoundMappingsHtml(category) {
+  const mappings = Array.isArray(category?.sound_mappings) ? category.sound_mappings : [];
+  if (mappings.length === 0) return "";
+
+  const rowsHtml = mappings
+    .map(
+      (m) => `
+    <tr>
+      <td class="col-feature"><strong>${m.data_characteristic}</strong></td>
+      <td class="col-sound"><span class="badge-sound">${m.sound_parameter}</span></td>
+      <td class="col-technique">
+        <div class="technique-name">${m.technique}</div>
+        ${m.detail ? `<small class="technique-detail">${m.detail}</small>` : ""}
+      </td>
+    </tr>
+  `
+    )
+    .join("");
+
+  return `
+    <div class="modal-mapping-table-wrap">
+      <h5 class="modal-subsection-heading">Data-to-Sound Mapping Specification</h5>
+      <table class="modal-mapping-table" aria-label="Data to sound mapping rules for ${category.title}">
+        <thead>
+          <tr>
+            <th scope="col">Scientific Data Feature</th>
+            <th scope="col">Audio Parameter</th>
+            <th scope="col">Sonification Technique</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 export class CategorySelectionUI {
@@ -432,11 +833,18 @@ export class CategorySelectionUI {
     this.modalObsImg = document.getElementById("modal-obs-img");
     this.modalObsTitle = document.getElementById("modal-obs-title");
     this.modalObsMission = document.getElementById("modal-obs-mission");
+    this.modalImageMeta = document.getElementById("modal-image-meta");
+    this.modalScienceBadge = document.getElementById("modal-science-badge");
+    this.modalScienceChips = document.getElementById("modal-science-chips");
     this.modalObsDesc = document.getElementById("modal-obs-desc");
     this.modalObsVoice = document.getElementById("modal-obs-voice");
     this.modalObsVariable = document.getElementById("modal-obs-variable");
     this.modalObsTechnique = document.getElementById("modal-obs-technique");
+    this.modalObsAcousticConcept = document.getElementById("modal-obs-acoustic-concept");
+    this.modalSoundMappingsContainer = document.getElementById("modal-sound-mappings-container");
     this.modalLegendSection = document.getElementById("modal-legend-section");
+    this.modalLegendBadge = document.getElementById("modal-legend-badge");
+    this.modalLegendImgWrap = document.getElementById("modal-legend-img-wrap");
     this.modalLegendImg = document.getElementById("modal-legend-img");
     this.modalLegendNotes = document.getElementById("modal-legend-notes");
     this.btnModalSonifyNow = document.getElementById("btn-modal-sonify-now");
@@ -448,6 +856,8 @@ export class CategorySelectionUI {
     this.btnBackToCategories = document.getElementById("btn-back-to-categories");
     this.detailTitle = document.getElementById("cat-detail-title");
     this.legendBadge = document.getElementById("cat-legend-badge");
+    this.catScienceChips = document.getElementById("cat-science-chips");
+    this.catLegendBadgeType = document.getElementById("cat-legend-badge-type");
     this.detailDesc = document.getElementById("cat-detail-desc");
     this.btnToggleMarkdown = document.getElementById("btn-toggle-info-md");
     this.fullMarkdown = document.getElementById("cat-full-markdown");
@@ -930,16 +1340,68 @@ export class CategorySelectionUI {
 
     const displayTitle = formatObservationDisplayTitle(item.title, item.filename);
     const mission = getMissionLabel(item.filename, category.id);
+    const meta = getCategoryScientificMeta(category);
 
     if (this.modalObsTitle) this.modalObsTitle.textContent = displayTitle;
     if (this.modalObsMission) this.modalObsMission.textContent = mission;
-    if (this.modalObsDesc) this.modalObsDesc.textContent = category.description || "Authentic NASA observation.";
+
     if (this.modalObsImg) {
       this.modalObsImg.src = item.thumb_url;
       this.modalObsImg.alt = displayTitle;
     }
 
-    // Acoustic parameters
+    if (this.modalImageMeta) {
+      const resMeta = formatImageResolutionMeta(item.filename);
+      this.modalImageMeta.innerHTML = `
+        <div class="meta-file-row">
+          <span class="meta-file-name" title="${item.filename}">${item.filename}</span>
+          <span class="badge badge-meta-sub">${resMeta}</span>
+        </div>
+      `;
+    }
+
+    // 1. Scientific Context & Mission Card
+    if (this.modalScienceBadge) {
+      this.modalScienceBadge.textContent = meta.model ? meta.model.split("(")[0].trim() : "NASA Earth Observing";
+    }
+    if (this.modalScienceChips) {
+      this.modalScienceChips.innerHTML = `
+        <span class="meta-chip"><strong>Model:</strong> ${meta.model}</span>
+        <span class="meta-chip"><strong>Domain:</strong> ${meta.domain}</span>
+        <span class="meta-chip"><strong>Variables:</strong> ${meta.variables}</span>
+        <span class="meta-chip"><strong>Snapshot:</strong> ${meta.snapshot}</span>
+      `;
+    }
+    if (this.modalObsDesc) {
+      this.modalObsDesc.innerHTML = formatScientificDescriptionHtml(category.description);
+    }
+
+    // 2. Color Legend Definition Card
+    if (this.modalLegendSection) {
+      if (category.has_legend) {
+        if (this.modalLegendImgWrap) this.modalLegendImgWrap.classList.remove("hidden");
+        if (this.modalLegendImg) {
+          const encodedId = encodeURIComponent(category.id);
+          this.modalLegendImg.src = `/api/categories/${encodedId}/legend`;
+          this.modalLegendImg.alt = `Colorbar legend for ${category.title}`;
+        }
+        if (this.modalLegendBadge) {
+          this.modalLegendBadge.textContent = "Calibrated Gradient Scale";
+        }
+      } else {
+        if (this.modalLegendImgWrap) this.modalLegendImgWrap.classList.add("hidden");
+        if (this.modalLegendBadge) {
+          this.modalLegendBadge.textContent = "Rule-Based Spatial Mapping";
+        }
+      }
+
+      if (this.modalLegendNotes) {
+        this.modalLegendNotes.innerHTML = formatColorLegendCardHtml(category, category.legend_info);
+      }
+      this.modalLegendSection.classList.remove("hidden");
+    }
+
+    // 3. Acoustic Translation Card
     const p = category.predefined_config;
     if (this.modalObsVoice) {
       this.modalObsVoice.textContent = (p?.instrument_family || "Pad").toUpperCase() + " Synthesizer";
@@ -950,22 +1412,14 @@ export class CategorySelectionUI {
     if (this.modalObsTechnique) {
       this.modalObsTechnique.textContent = category.sonification_technique || "Spatial Grid & Luminance Mapping";
     }
-
-    // Legend
-    if (this.modalLegendSection) {
-      if (category.has_legend) {
-        this.modalLegendSection.classList.remove("hidden");
-        if (this.modalLegendImg) {
-          const encodedId = encodeURIComponent(category.id);
-          this.modalLegendImg.src = `/api/categories/${encodedId}/legend`;
-          this.modalLegendImg.alt = `Colorbar legend for ${category.title}`;
-        }
-        if (this.modalLegendNotes) {
-          this.modalLegendNotes.textContent = category.legend_info || "True data colorbar for value inversion.";
-        }
-      } else {
-        this.modalLegendSection.classList.add("hidden");
-      }
+    if (this.modalObsAcousticConcept) {
+      this.modalObsAcousticConcept.textContent =
+        category.sonification_description ||
+        category.sonification_concept ||
+        "Data values are mapped to pitch, timbre, and stereo panning using Earth Jukebox's rigorous sonification engine.";
+    }
+    if (this.modalSoundMappingsContainer) {
+      this.modalSoundMappingsContainer.innerHTML = formatSoundMappingsHtml(category);
     }
 
     this.obsPreviewModal.classList.remove("hidden");
@@ -1106,12 +1560,26 @@ export class CategorySelectionUI {
 
     // Populate Category Details
     if (this.detailTitle) this.detailTitle.textContent = category.title;
-    if (this.detailDesc) this.detailDesc.textContent = category.description || "Scientific dataset visualization.";
+    const meta = getCategoryScientificMeta(category);
+    if (this.catScienceChips) {
+      this.catScienceChips.innerHTML = `
+        <span class="meta-chip"><strong>Model:</strong> ${meta.model}</span>
+        <span class="meta-chip"><strong>Domain:</strong> ${meta.domain}</span>
+        <span class="meta-chip"><strong>Variables:</strong> ${meta.variables}</span>
+        <span class="meta-chip"><strong>Snapshot:</strong> ${meta.snapshot}</span>
+      `;
+    }
+    if (this.detailDesc) {
+      this.detailDesc.innerHTML = formatScientificDescriptionHtml(category.description);
+    }
 
     // Legend badge
     if (this.legendBadge) {
       this.legendBadge.textContent = category.has_legend ? "Colorbar Legend Included" : "Direct / Spatial Sonification";
       this.legendBadge.className = category.has_legend ? "badge badge-legend-yes" : "badge badge-legend-no";
+    }
+    if (this.catLegendBadgeType) {
+      this.catLegendBadgeType.textContent = category.has_legend ? "Colorimetric Scale" : "Rule-Based Spatial";
     }
 
     // Markdown notes expander
@@ -1133,7 +1601,7 @@ export class CategorySelectionUI {
         this.legendImg.alt = `Colorbar legend for ${category.title}`;
       }
       if (this.legendNotes) {
-        this.legendNotes.textContent = category.legend_info || "Maps scientific data values to colors according to the colorbar above.";
+        this.legendNotes.innerHTML = formatColorLegendCardHtml(category, category.legend_info);
       }
       if (this.noLegendNotice) this.noLegendNotice.classList.add("hidden");
     } else {
@@ -1141,6 +1609,9 @@ export class CategorySelectionUI {
       if (this.legendImg) {
         this.legendImg.src = "";
         this.legendImg.alt = "";
+      }
+      if (this.legendNotes) {
+        this.legendNotes.innerHTML = formatColorLegendCardHtml(category, category.legend_info);
       }
       if (this.noLegendNotice) this.noLegendNotice.classList.remove("hidden");
     }
