@@ -1727,7 +1727,7 @@ main {
 .player-options {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.75rem;
   padding-top: 0.65rem;
   border-top: 1px solid var(--border-subtle);

@@ -17,8 +17,10 @@ def test_web_mvp_assets_served() -> None:
     assert "Earth Jukebox" in r.text
     assert 'id="map-canvas"' in r.text
     assert 'id="btn-play"' in r.text
-    assert 'id="btn-explore"' in r.text
-    assert 'id="toggle-haptics"' in r.text
+    assert 'id="btn-stop"' in r.text
+    assert 'id="btn-explore"' not in r.text
+    assert 'id="toggle-haptics"' not in r.text
+    assert 'id="skin-select"' not in r.text
     assert 'id="explore-live"' in r.text
     assert 'id="fid-legend-r"' in r.text
     assert 'id="tab-gallery"' in r.text

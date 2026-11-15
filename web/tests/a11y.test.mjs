@@ -99,12 +99,11 @@ test("F-078 AC: Design system contrast, tap targets, focus rings, and reduced mo
   assert.match(css, /@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)/i, "Must support prefers-color-scheme: dark");
 });
 
-test("F-077, F-079, F-081 AC: Explore mode, haptics, and fidelity panel elements", () => {
-  // Explore button with aria-pressed
-  assert.match(html, /id="btn-explore"[^>]*aria-pressed="false"/i, "Explore mode button must have aria-pressed attribute");
-
-  // Haptics toggle
-  assert.match(html, /id="toggle-haptics"/i, "Haptics toggle must exist in DOM");
+test("Issue #5 AC: Explore mode button, haptics toggle, and skin selector removed, fidelity elements retained", () => {
+  // Unneeded options removed per Issue #5
+  assert.ok(!html.includes('id="btn-explore"'), "Explore mode button must be removed from DOM");
+  assert.ok(!html.includes('id="toggle-haptics"'), "Haptics toggle must be removed from DOM");
+  assert.ok(!html.includes('id="skin-select"'), "Skin selector must be removed from DOM");
 
   // Explore visual cursor
   assert.match(html, /id="explore-cursor"[^>]*class="[^"]*box-explore[^"]*"/i, "Explore visual cursor must exist");
