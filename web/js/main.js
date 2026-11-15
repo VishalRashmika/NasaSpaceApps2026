@@ -312,11 +312,14 @@ class App {
     try {
       const h = await getHealth();
       if (statusEl) {
-        statusEl.textContent = `Backend v${h.version} (Mapping ${h.mapping_version})`;
+        statusEl.textContent = "Ready";
+        statusEl.title = `Backend v${h.version} (Mapping ${h.mapping_version})`;
+        statusEl.classList.remove("status-offline");
       }
     } catch {
       if (statusEl) {
         statusEl.textContent = "Backend offline";
+        statusEl.classList.add("status-offline");
       }
     }
   }
