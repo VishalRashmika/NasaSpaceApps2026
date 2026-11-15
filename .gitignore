@@ -119,3 +119,11 @@ queue*.md
 *.queue.md
 .agent/
 .antigravity/
+# agyq runtime state, queues, cache, and logs
+queue.md
+QUEUE.md
+queue.*.md
+.queue.md
+agyq.json
+agyq.local.json
+*.agyq.json
